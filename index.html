@@ -517,6 +517,7 @@ var I18N_EN = {
 '潜在目标客户':'Potential Leads',
 '访客会话':'Visitor Sessions',
 '浏览器分布':'Browser Distribution',
+'其他':'Other',
 '全部热门页面（按访问量）':'All Top Pages (by views)',
 '页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）':'Core Web Vitals (p75, from real visitors)',
 '各页面性能（按采样数）':'Per-page Performance (by samples)',
@@ -565,6 +566,7 @@ var I18N_EN = {
 '设备':'Device','状态':'Status',
 '直接访问':'Direct',
 '访客':'Visitor','来路':'Source','设备 / 浏览器':'Device / Browser','运营商':'ISP','地区':'Region','页面':'Pages','停留':'Duration','最近活跃':'Last Active',
+'新访客':'New Visitor','回访客':'Returning Visitor',
 '疑似数据采集':'Suspected data collection','疑似爬虫/抓取':'Suspected crawler/scraper','浏览量畸高':'High pageviews',
 '数据中心/云主机网络，疑似数据采集/抓取':'Datacenter/cloud network, suspected data collection/scraping',
 '数据中心/云主机网络且浏览量畸高，疑似数据采集/抓取':'Datacenter/cloud network with abnormally high pageviews, suspected data collection/scraping',
@@ -1217,7 +1219,7 @@ function renderOverview(d){
     } else {
       c3.setOption({
         tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
-        series:[{type:'pie',radius:['42%','70%'],data:subs.map(function(x){return {name:x.name,value:x.value};}),
+        series:[{type:'pie',radius:['42%','70%'],data:subs.map(function(x){return {name:t(x.name),value:x.value};}),
           label:{color:pieLabelColor(),fontSize:11,formatter:'{b}\n{c}'},
           itemStyle:pieBorder()}]
       });
@@ -1450,7 +1452,7 @@ function renderVisitors(rows){
       '<td>'+expandIcon+'</td>'+
       '<td class="mono">'+shortId(v.visitor)+(v.is_inquiry ? '<span class="inq-badge">'+t('潜在目标客户')+'</span>' : '')+suspectBadge+'</td>'+
       '<td>'+ref+'</td>'+
-      '<td><span class="tag '+devClass(v.device)+'">'+escapeHtml(t(v.device))+'</span> '+escapeHtml(v.browser)+'</td>'+
+      '<td><span class="tag '+devClass(v.device)+'">'+escapeHtml(t(v.device))+'</span> '+escapeHtml(t(v.browser))+'</td>'+
       '<td>'+isp+'</td>'+
       '<td>'+region+'</td>'+
       '<td class="right">'+fmtNum(v.pv)+'</td>'+
@@ -1619,7 +1621,7 @@ function renderContent(d){
   if(c2){
     c2.setOption({
       tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
-      series:[{type:'pie',roseType:'radius',radius:['30%','70%'],data:d.browser.map(function(x){return {name:x.name,value:x.value};}),
+      series:[{type:'pie',roseType:'radius',radius:['30%','70%'],data:d.browser.map(function(x){return {name:t(x.name),value:x.value};}),
         label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
     });
   }
