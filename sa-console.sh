@@ -54,6 +54,7 @@ read_cfg() {
   if [ -z "$val" ] && [ -f start.sh ]; then
     case "$key" in
       port)  val=$(grep -oE 'PORT="\$\{PORT:-[0-9]+\}"' start.sh | grep -oE '[0-9]+');;
+      token) val=$(grep -oE 'TOKEN="\$\{TOKEN:-[^"]*\}"' start.sh | sed -E 's/TOKEN="\$\{TOKEN:-//; s/\}"$//');;
     esac
   fi
   case "$key" in
@@ -80,6 +81,7 @@ write_cfg() {
     token)
       [ -f "$SVC_FILE_LOCAL" ] && sed -i "s/--token [^ ]*/--token ${nv}/" "$SVC_FILE_LOCAL"
       [ -f "$SVC_FILE_SYS" ] && sed -i "s/--token [^ ]*/--token ${nv}/" "$SVC_FILE_SYS"
+      [ -f start.sh ] && sed -i "s#TOKEN=\"\${TOKEN:-[^\"]*}\"#TOKEN=\"\${TOKEN:-${nv}}\"#" start.sh
       ;;
   esac
   echo -e "${C_G}已更新 ${key} = ${nv}（下次启动/重启后生效）${C_0}"
@@ -282,8 +284,7 @@ show_menu() {
   echo "12: 更新 GeoIP 数据库"
   echo "13: 备份数据"
   echo "14: 清理过期数据（按保留期）"
-  echo "15: 应用配置修改（重启服务）"
-  echo "16: 关于 / 版本"
+  echo "15: 关于 / 版本"
   echo " 0: 退出"
   echo -e "${C_B}======================================================${C_0}"
 }
@@ -292,7 +293,7 @@ run_loop() {
   local choice
   while true; do
     show_menu
-    read -r -p "请输入操作编号 (0-16): " choice
+    read -r -p "请输入操作编号 (0-15): " choice
     case "$choice" in
       1) do_start;;
       2) do_stop;;
@@ -308,8 +309,7 @@ run_loop() {
       12) update_geoip;;
       13) backup_data;;
       14) cleanup_data;;
-      15) do_restart;;
-      16) do_about;;
+      15) do_about;;
       0|q|Q) echo "再见。"; exit 0;;
       *) echo -e "${C_R}无效选项：$choice${C_0}";;
     esac
