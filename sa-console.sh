@@ -70,16 +70,13 @@ read_cfg() {
 find_pids() {
   local p="$(read_cfg port)" pids=""
   if command -v ss >/dev/null 2>&1; then
-    # 从监听端口所在行提取 pid=（仅 root 能看到其它用户的 pid；本服务同用户运行无碍）
-    pids=$(ss -ltnp 2>/dev/null | awk -v port="$p" '
-      $0 ~ "(^|[:.])" port "[[:>:]]" {
-        for (i=1;i<=NF;i++) if ($i ~ /pid=[0-9]+/) { sub("pid=","",$i); print $i }
-      }')
+    # 找到监听该端口的行（端口后必须非数字，避免 8899 误匹配 88999），再提取其中的 pid=
+    pids=$(ss -ltnp 2>/dev/null | grep -E "[:.]${p}([^0-9]|$)" | grep -oE 'pid=[0-9]+' | sed 's/pid=//' | sort -u)
   elif command -v lsof >/dev/null 2>&1; then
-    pids=$(lsof -ti :"${p}" 2>/dev/null)
+    pids=$(lsof -ti :"${p}" 2>/dev/null | sort -u)
   fi
   if [ -z "$pids" ]; then
-    pids=$(pgrep -f "[a]pp.py" 2>/dev/null)
+    pids=$(pgrep -f "[a]pp.py" 2>/dev/null | sort -u)
   fi
   # 只保留纯数字 PID，过滤空行/多余空白
   echo "$pids" | grep -oE '[0-9]+' | sort -u
@@ -95,7 +92,7 @@ svc_active() {
 port_listening() {
   local p="$1"
   if command -v ss >/dev/null 2>&1; then
-    ss -ltn 2>/dev/null | grep -qE "[:.]${p}\b"
+    ss -ltn 2>/dev/null | grep -qE "[:.]${p}([^0-9]|$)"
   elif command -v lsof >/dev/null 2>&1; then
     lsof -i ":${p}" >/dev/null 2>&1
   else
@@ -177,23 +174,27 @@ do_update_check() {
     echo "未找到 curl，无法联网检查更新。"
     return
   fi
+  # 直接读取 GitHub main 分支 app.py 里的 VERSION（公开仓库用 raw URL，无需 Release/Tag）
+  local raw="https://raw.githubusercontent.com/gg4midas/site_analytics/main/app.py"
   local latest
-  latest=$(curl -s --max-time 8 "https://api.github.com/repos/gg4midas/site_analytics/releases/latest" 2>/dev/null \
-            | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+  latest=$(curl -sL --max-time 10 "$raw" 2>/dev/null \
+            | grep -oE "VERSION\s*=\s*['\"][^'\"]+['\"]" | head -1 \
+            | sed -E "s/^[^'\"]*['\"]//; s/['\"]$//")
   if [ -z "$latest" ]; then
     echo "无法获取最新版本（无网络或 GitHub 不可达）。"
     return
   fi
   local cur_n latest_n
-  cur_n=$(echo "$cur" | sed -E 's/^v//')
-  latest_n=$(echo "$latest" | sed -E 's/^v//')
+  cur_n=$(echo "$cur" | sed -E 's/^v//; s/[^0-9.]//g')
+  latest_n=$(echo "$latest" | sed -E 's/^v//; s/[^0-9.]//g')
   echo "最新版本 : $latest"
-  if [ "$cur_n" = "$latest_n" ]; then
-    echo "已是最新版本。"
+  # 版本比较：以 latest 与 cur 做版本排序，若 cur 不低于 latest 则无需更新
+  if [ "$(printf '%s\n%s\n' "$latest_n" "$cur_n" | sort -V | tail -1)" = "$cur_n" ]; then
+    echo "已是最新版本（或更高）。"
     return
   fi
   echo "发现新版本 $latest（当前 $cur）。"
-  read -r -p "是否更新？(y/N): " ans
+  read -r -p "是否下载更新并重启？(y/N): " ans
   case "$ans" in
     y|Y) do_upgrade;;
     *) echo "已取消。";;
@@ -201,18 +202,37 @@ do_update_check() {
 }
 
 do_upgrade() {
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "正在 git pull ..."
-    if ( cd "$INSTALL_DIR" && git pull --ff-only 2>&1 ); then
-      echo "代码已更新，正在重启服务。"
-      do_restart
-    else
-      echo "git pull 失败，请手动更新后重启。"
-    fi
-  else
-    echo "当前不是 git 仓库，无法自动更新。"
-    echo "请手动下载最新 zip 覆盖 $INSTALL_DIR 后重启服务。"
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "未找到 curl，无法下载更新。"; return
   fi
+  if ! command -v unzip >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+    echo "未找到 unzip/python3，无法解压更新包。"; return
+  fi
+  echo "正在从 GitHub 下载最新代码 ..."
+  local tmp; tmp=$(mktemp -d)
+  local zip="$tmp/main.zip"
+  if ! curl -sL --max-time 60 -o "$zip" "https://github.com/gg4midas/site_analytics/archive/refs/heads/main.zip" 2>/dev/null; then
+    echo "下载失败，请手动更新。"; rm -rf "$tmp"; return
+  fi
+  local src
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q -o "$zip" -d "$tmp" 2>/dev/null
+  else
+    python3 -c "import zipfile; zipfile.ZipFile('$zip').extractall('$tmp')" 2>/dev/null
+  fi
+  src=$(find "$tmp" -maxdepth 1 -type d -name 'site_analytics-*' | head -1)
+  if [ -z "$src" ] || [ ! -f "$src/app.py" ]; then
+    echo "解压结果异常，已中止。"; rm -rf "$tmp"; return
+  fi
+  echo "已下载，正在覆盖文件（保留 data/ 数据库与本地配置）..."
+  do_stop
+  sleep 1
+  # 用 tar 同步代码文件，排除版本库 / 数据库 / 日志 / data 目录
+  ( cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' . ) | ( tar -xf - -C "$INSTALL_DIR" )
+  [ -f "$INSTALL_DIR/sa-console.sh" ] && chmod +x "$INSTALL_DIR/sa-console.sh"
+  echo "文件已更新至 $(app_version)。"
+  rm -rf "$tmp"
+  do_start
 }
 
 # ============================================================================
