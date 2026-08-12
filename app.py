@@ -156,6 +156,10 @@ class StatEngine(object):
         self._load_geo(geo_db)
         self._load_asn(asn_db)
         self._init_db()
+        # 加载运行时可配置项：潜在目标客户规则、统计时区
+        self._inquiry_keywords = self.get_lead_patterns()
+        self._build_inquiry_patterns()
+        self.reload_timezone()
 
     # ---------------- 日志 ----------------
     def _log(self, msg):
@@ -603,21 +607,32 @@ class StatEngine(object):
         'jepum', 'munui', '제품', '문의',
     )
 
-    @staticmethod
-    def _is_potential_inquiry(paths):
+    def _is_potential_inquiry(self, paths):
         """潜在询盘访客：访问 URL 含产品页或联系页（及其多语种变体）任一即命中。
 
-        命中关键词见 _INQUIRY_PATH_KEYWORDS，覆盖 英/法/德/意/荷/西 及 日/韩 的
-        产品(product/produit/produkt/prodotto/producto/seihin/jepum 等) 与
-        联系(contact/kontakt/contatti/contacto/otoiawase/munui 等) 路径。
-        子串匹配（不区分大小写，已做 URL 解码），因此 /fr/products、/de/produkte
-        等带语言前缀的链接同样命中；同一访客命中任一即视为潜在询盘客户。
+        命中关键词见 self._inquiry_keywords（可在站点管理后台自定义，支持 * 通配符），
+        覆盖 英/法/德/意/荷/西 及 日/韩 的 产品(product/produit/produkt/prodotto/
+        producto/seihin/jepum 等) 与 联系(contact/kontakt/contatti/contacto/
+        otoiawase/munui 等) 路径。子串匹配（不区分大小写，已做 URL 解码），因此
+        /fr/products、/de/produkte 等带语言前缀的链接同样命中；同一访客命中任一即
+        视为潜在询盘客户。
         """
         if not paths:
             return False
-        low = [unquote(p).lower() for p in paths]
-        for kw in StatEngine._INQUIRY_PATH_KEYWORDS:
-            if any(kw in p for p in low):
+        for p in paths:
+            if self._inquiry_path_match(unquote(p or '').lower()):
+                return True
+        return False
+
+    def _inquiry_path_match(self, low_path):
+        """low_path 已 lower() 且 URL 解码。命中 self._inquiry_patterns 中任一即 True。
+        self._inquiry_patterns 元素为 (is_regex, pattern)：is_regex=True 时为已编译正则，
+        否则为小写子串。"""
+        for is_re, pat in getattr(self, '_inquiry_patterns', []):
+            if is_re:
+                if pat.search(low_path):
+                    return True
+            elif pat and pat in low_path:
                 return True
         return False
 
@@ -772,9 +787,10 @@ class StatEngine(object):
         try:
             conn = self._conn()
             ph = ','.join('?' * len(sites))
+            secs = int(round((getattr(self, '_tz_offset', 8.0)) * 3600))
             rows = conn.execute(
-                "SELECT strftime('%Y-%m', datetime(ts/1000, 'unixepoch', '+8 hours')) AS ym "
-                "FROM visible_events WHERE site IN (%s) AND type='pageview' GROUP BY ym ORDER BY ym DESC" % ph,
+                "SELECT strftime('%%Y-%%m', datetime(ts/1000, 'unixepoch', '%+d seconds')) AS ym "
+                "FROM visible_events WHERE site IN (%s) AND type='pageview' GROUP BY ym ORDER BY ym DESC" % (secs, ph),
                 tuple(sites)).fetchall()
             conn.close()
             return [r[0] for r in rows if r[0]]
@@ -924,6 +940,94 @@ class StatEngine(object):
         except Exception as e:
             self._log('set_retention_days ERROR: %s' % e)
             return None
+
+    # ---------------- 潜在询盘（潜在目标客户）页面规则 ----------------
+    def get_lead_patterns(self):
+        """返回潜在目标客户判定用的路径模式列表（支持 * 通配符）。缺省回退到内置多语种关键词。"""
+        try:
+            conn = self._conn()
+            row = conn.execute("SELECT value FROM meta WHERE key='lead_patterns'").fetchone()
+            conn.close()
+            if row and row[0]:
+                lst = json.loads(row[0])
+                if isinstance(lst, list) and lst:
+                    return [str(x).strip() for x in lst if str(x).strip()]
+        except Exception:
+            pass
+        return list(StatEngine._INQUIRY_PATH_KEYWORDS)
+
+    def set_lead_patterns(self, patterns):
+        """保存潜在目标客户路径模式（列表或换行分隔字符串，支持 * 通配符）。空列表则恢复默认。"""
+        if patterns is None:
+            patterns = []
+        if isinstance(patterns, str):
+            patterns = patterns.split('\n')
+        lst = [str(x).strip() for x in patterns if str(x).strip()]
+        try:
+            conn = self._conn()
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('lead_patterns', ?)",
+                         (json.dumps(lst, ensure_ascii=False),))
+            conn.commit(); conn.close()
+        except Exception as e:
+            self._log('set_lead_patterns ERROR: %s' % e)
+            return None
+        self._inquiry_keywords = lst if lst else list(StatEngine._INQUIRY_PATH_KEYWORDS)
+        self._build_inquiry_patterns()
+        return self._inquiry_keywords
+
+    def _build_inquiry_patterns(self):
+        """将 self._inquiry_keywords 编译为 (is_regex, pattern) 列表。
+        含 * 视为通配符：转义其余字符后把 * 替换为 .* 并做正则子串匹配；否则按小写子串匹配。"""
+        self._inquiry_patterns = []
+        for kw in getattr(self, '_inquiry_keywords', []):
+            if '*' in kw:
+                try:
+                    rx = re.compile(re.escape(kw).replace('\\*', '.*'), re.I)
+                    self._inquiry_patterns.append((True, rx))
+                except Exception:
+                    self._inquiry_patterns.append((False, kw.lower()))
+            else:
+                self._inquiry_patterns.append((False, kw.lower()))
+
+    # ---------------- 时区（自定义统计时区，默认东八区） ----------------
+    def get_timezone_offset(self, default=8.0):
+        """返回统计时区相对 UTC 的偏移小时数（浮点，默认 8 = 东八区）。"""
+        try:
+            conn = self._conn()
+            row = conn.execute("SELECT value FROM meta WHERE key='timezone_offset'").fetchone()
+            conn.close()
+            if row and row[0]:
+                v = float(row[0])
+                if -12.0 <= v <= 14.0:
+                    return v
+        except Exception:
+            pass
+        return default
+
+    def set_timezone_offset(self, off):
+        """保存统计时区偏移（小时，浮点），并即时重载内存中的时区。"""
+        try:
+            off = float(off)
+        except (ValueError, TypeError):
+            return None
+        if off < -12.0 or off > 14.0:
+            return None
+        conn = self._conn()
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('timezone_offset', ?)",
+                     (str(off),))
+        conn.commit(); conn.close()
+        self.reload_timezone()
+        return off
+
+    def reload_timezone(self):
+        """从 meta 重载统计时区，更新模块级 TZ_BEIJING 全局与 self._tz_offset。"""
+        global TZ_BEIJING
+        off = self.get_timezone_offset()
+        try:
+            TZ_BEIJING = timezone(timedelta(hours=off))
+        except Exception:
+            TZ_BEIJING = timezone(timedelta(hours=8))
+        self._tz_offset = off
 
     def cleanup_old_events(self, days=None):
         """删除超过保留期的原始事件，返回删除条数。days=None 时取 meta 中的 retention_days。"""
@@ -1582,8 +1686,7 @@ class StatEngine(object):
             total_visitors = 0
             inquiry_count_full = 0
             try:
-                kw = StatEngine._INQUIRY_PATH_KEYWORDS
-                # 询盘访客集合：与 _is_potential_inquiry 口径一致（URL 解码后子串匹配，含 CJK），全周期
+                # 询盘访客集合：与 _is_potential_inquiry 口径一致（URL 解码后子串/通配符匹配，含 CJK），全周期
                 dist_paths = conn.execute(
                     "SELECT DISTINCT visitor, %s FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % (_CLEAN_PATH_SQL, ph),
                     sp + (start_ms, end_ms)).fetchall()
@@ -1594,8 +1697,7 @@ class StatEngine(object):
                     if k in _seen:
                         continue
                     _seen.add(k)
-                    low = unquote(p or '').lower()
-                    if any(kwi in low for kwi in kw):
+                    if self._inquiry_path_match(unquote(p or '').lower()):
                         inquiry_vis.add(vid)
                 inquiry_count_full = len(inquiry_vis)
 
@@ -1792,6 +1894,7 @@ class StatEngine(object):
                 b['first_time'] = self._fmt_bj(b['first_time'])
                 b['last_time'] = self._fmt_bj(b['last_time'])
                 b['duration_text'] = self._fmt_duration(b['duration_total'])
+                b['duration_total'] = int(b.get('duration_total') or 0)
                 b['actions_count'] = b['event_count']
                 b['pv'] = b['pv'] + len(b.get('hide_pages', {}))
                 b['pages_count'] = b.get('pages_count', len(b.get('pages_list', [])))
@@ -1946,6 +2049,7 @@ class StatEngine(object):
                     'pages_count': len(all_pages),
                     'current_path': current_path,
                     'duration_text': self._fmt_duration(b['duration_total']),
+                    'duration_total': int(b.get('duration_total') or 0),
                 })
             out.sort(key=lambda x: x['last_time'], reverse=True)
             return {'rows': out[:limit], 'online': online}
@@ -2136,7 +2240,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
                 days = self.engine.get_retention_days()
-                self._send_json({'status': True, 'retention_days': days})
+                tz = self.engine.get_timezone_offset()
+                lp = self.engine.get_lead_patterns()
+                self._send_json({'status': True, 'retention_days': days,
+                                 'timezone_offset': tz, 'lead_patterns': lp})
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
@@ -2273,10 +2380,25 @@ class Handler(BaseHTTPRequestHandler):
                     d = self.engine.set_retention_days(body['retention_days'])
                     if d:
                         resp['retention_days'] = d
+                if 'timezone_offset' in body and body['timezone_offset'] is not None:
+                    try:
+                        off = self.engine.set_timezone_offset(body['timezone_offset'])
+                        if off is not None:
+                            resp['timezone_offset'] = off
+                    except Exception as e:
+                        resp['timezone_error'] = str(e)
+                if 'lead_patterns' in body:
+                    lp = self.engine.set_lead_patterns(body['lead_patterns'])
+                    if lp is not None:
+                        resp['lead_patterns'] = lp
                 if body.get('cleanup_now'):
                     resp['deleted'] = self.engine.cleanup_old_events(body.get('days'))
                 if 'retention_days' not in resp and 'deleted' not in resp:
                     resp['retention_days'] = self.engine.get_retention_days()
+                if 'timezone_offset' not in resp:
+                    resp['timezone_offset'] = self.engine.get_timezone_offset()
+                if 'lead_patterns' not in resp:
+                    resp['lead_patterns'] = self.engine.get_lead_patterns()
                 self._send_json({'status': True, 'data': resp})
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
