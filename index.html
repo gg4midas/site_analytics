@@ -638,7 +638,7 @@ function switchLang(lang){
   applyI18n();
   var og = document.querySelector('#selRange optgroup');
   if(og) og.label = t('月份');
-  if(currentSite){ loadData(); } else { initRangeSelector(); }
+  if(currentSite){ loadData(); } else { loadSites(); }
   applyThemeAttr();
 }
 var ECHARTS_OK = (typeof echarts !== 'undefined');
