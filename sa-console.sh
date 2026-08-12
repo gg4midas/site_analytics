@@ -20,7 +20,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.4"
+CONSOLE_VER="1.3.5"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -220,7 +220,8 @@ list_release_tags() {
         repo=$(echo  "$SA_UPDATE_MIRROR" | sed -E 's#https://gitee\.com/[^/]+/([^/]+)/repository/archive.*#\1#')
         if [ -n "$owner" ] && [ -n "$repo" ]; then
           gt=$(curl -fsSL --max-time 20 "https://gitee.com/api/v5/repos/$owner/$repo/tags?per_page=30" 2>/dev/null \
-               | grep -oE '"name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/' | sort -V | tail -30)
+               | grep -oE '"name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/' \
+               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -30)
           if [ -n "$gt" ]; then echo "$gt"; return; fi
         fi
         ;;
@@ -345,7 +346,7 @@ do_rollback() {
   fi
   local cur; cur="$(app_version)"
   echo "当前版本 : $cur"
-  echo "可用版本（已发布到 GitHub 的 Release）："
+  echo "可用版本（镜像源已发布，GitHub/Gitee）："
   local tags; tags="$(list_release_tags)"
   if [ -z "$tags" ]; then echo "暂无可回滚的 Release。"; return; fi
   local i=1 t
