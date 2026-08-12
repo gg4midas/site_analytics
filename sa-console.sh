@@ -10,6 +10,9 @@
 # ============================================================================
 set -u
 
+# 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
+CONSOLE_VER="1.1.0"
+
 # ---- 定位安装目录 ----
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 if [ -n "${SA_HOME:-}" ] && [ -f "$SA_HOME/app.py" ]; then
@@ -256,12 +259,20 @@ edit_cfg() {
 
 do_about() {
   echo "site_analytics 服务管理控制台"
+  echo "控制台版本 : $CONSOLE_VER"
   echo "安装目录 : $INSTALL_DIR"
   echo "默认端口 : $(read_cfg port)   监听 : $(read_cfg host)"
+  # 应用版本：从 app.py 的 VERSION = "x.y.z" 读取
+  local v=""
   if [ -f app.py ]; then
-    local v; v=$(grep -oE "VERSION\s*=\s*['\"][^'\"]+['\"]" app.py | head -1)
-    [ -n "$v" ] && echo "版本标识 : $v"
+    v=$(grep -oE "VERSION\s*=\s*['\"][^'\"]+['\"]" app.py | head -1 | sed -E "s/^[^'\"]*['\"]//; s/['\"]$//")
   fi
+  if [ -n "$v" ]; then
+    echo "应用版本 : $v"
+  else
+    echo "应用版本 : 未设置（app.py 无 VERSION 常量）"
+  fi
+  echo "运行用户 : $(id -un 2>/dev/null || echo '?')   Python : ${PY:-未找到}"
 }
 
 # ============================================================================
