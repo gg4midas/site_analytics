@@ -87,6 +87,7 @@ site_analytics/
 │   └── echarts.min.js      # 本地图表库（已随仓库，无需联网）
 ├── start.sh                # 启动脚本（后台运行，写 run.log）
 ├── restart.sh              # 重启脚本
+├── sa-console.sh           # 服务器管理控制台：启停 / 重启 / 版本检查 / 一键升级
 ├── site_analytics.service  # systemd 服务单元示例
 ├── update_geoip.sh         # 下载 / 更新 GeoLite2 数据库（City + ASN）
 ├── geoip/                  # 运行时放置 GeoLite2-*.mmdb（需自行下载，未入库）
@@ -279,6 +280,44 @@ proxy_set_header X-Real-IP $remote_addr;
 
 ---
 
+## 服务管理控制台（sa-console.sh，服务器运维）
+
+部署到服务器后，可用自带的控制台统一管理启停与升级，无需记忆命令。
+
+### 安装与软链
+
+```bash
+# 把 sa-console.sh 放到安装目录（如 /opt/site_analytics），赋予执行权限
+chmod +x sa-console.sh
+# 可选：软链到 PATH，之后任意目录输入 sa-console 即可
+ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
+```
+
+### 交互式菜单
+
+```text
+=========== site_analytics 服务管理控制台 ===========
+ 1: 检查版本更新
+ 2: 启动服务
+ 3: 关闭服务
+ 4: 重启服务
+ 0: 退出
+======================================================
+```
+
+- **1 检查版本更新**：读取 `app.py` 里的 `VERSION`，联网比对 GitHub `main` 分支最新版本；若发现新版本，确认后自动下载覆盖并重启（保留数据库与本地配置）。
+- **2 启动 / 3 关闭 / 4 重启**：兼容「`nohup` + `start.sh`」与「systemd 服务」两种运行方式；按监听端口反查进程，状态显示准确。
+
+### 单命令（便于脚本 / 监控调用）
+
+```bash
+sa-console start | stop | restart | status | update
+```
+
+> 当前版本号记录在 `app.py` 的 `VERSION` 常量中（发版时改此处即可，控制台会自动比对并提示升级）。
+
+---
+
 ## 嵌入埋点代码
 
 把下面一行放在每个页面的 `</body>` 之前（或全站公共模板里）：
@@ -380,7 +419,7 @@ proxy_set_header X-Real-IP $remote_addr;
 - **图表不显示**：确认 `static/echarts.min.js` 存在且可访问。
 - **地域为空**：GeoIP 未启用——确认已 `pip install maxminddb`、已下载 `.mmdb`、且重启了后端。
 - **全部访客显示同一 IP / 内网**：反向代理未透传 `X-Forwarded-For`，参照「真实 IP 透传」配置。
-- **端口占用**：`bash restart.sh` 会自动释放；或 `lsof -i :8899` / `fuser -k 8899/tcp` 手动释放后重启。
+- **端口占用**：`sa-console 重启` 会自动按端口定位进程并释放；或 `bash restart.sh`、`lsof -i :8899` / `fuser -k 8899/tcp` 手动释放后重启。
 
 ---
 
