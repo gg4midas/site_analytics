@@ -1214,13 +1214,11 @@ function renderDwellTable(rows){
   var el=document.getElementById('tblDwell');
   if(!el) return;
   if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
-  var max=Math.max.apply(null, rows.map(function(r){return r.views;}));
-  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('平均停留')+'</th><th class="col-bar">'+t('访问次数')+'</th></tr></thead><tbody>';
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('平均停留')+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
-    var r=rows[i], pct=max?Math.round(r.views/max*100):0;
+    var r=rows[i];
     h+='<tr><td class="col-idx">'+(i+1)+'</td><td class="cell-path">'+pageLink(r.site || currentSite,r.path)+'</td>'+
-       '<td class="right mono">'+fmtDuration(r.avg)+'</td>'+
-       '<td class="col-bar"><div class="bar-cell"><div class="bar-fill" style="width:'+pct+'%"></div></div></td></tr>';
+       '<td class="right mono">'+fmtDuration(r.avg)+'</td></tr>';
   }
   el.innerHTML=h+'</tbody>';
 }
@@ -1581,18 +1579,15 @@ function renderContent(d){
 function renderPagesTable(rows, targetId){
   var el=document.getElementById(targetId || 'tblPages3');
   if(!el) return;
-  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty" colspan="4">'+t('暂无数据')+'</td></tr>'; return; }
-  var max=Math.max.apply(null, rows.map(function(r){return r.value;}));
-  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('次数')+'</th><th class="col-bar">'+t('访问量')+'</th></tr></thead><tbody>';
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty" colspan="3">'+t('暂无数据')+'</td></tr>'; return; }
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('次数')+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
-    var pct=max? Math.round(r.value/max*100):0;
     var sp=sitePrefix(r.site||'');
     h+='<tr>'+
       '<td class="col-idx">'+ (i+1) +'</td>'+
       '<td class="cell-path">'+(sp?'<span class="site-tag" title="'+escapeHtml(r.site||'')+'">'+escapeHtml(sp)+'</span> ':'')+pageLink(r.site || currentSite, r.name)+'</td>'+
       '<td class="right mono">'+ fmtNum(r.value) +'</td>'+
-      '<td class="col-bar"><div class="bar-cell"><div class="bar-fill" style="width:'+pct+'%"></div></div></td>'+
       '</tr>';
   }
   el.innerHTML=h+'</tbody>';
