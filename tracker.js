@@ -63,7 +63,7 @@
     if (h === 'localhost' || /^\d+(\.\d+){3}$/.test(h)) return '';   // 本机/纯 IP 无法跨域共享
     var parts = h.split('.');
     if (parts.length <= 2) return '';                               // 无子域/单标签，无需跨域
-    return '.' + parts.slice(-2).join('.');                         // 取注册父域，如 .bio-starch.com
+    return '.' + parts.slice(-2).join('.');                         // 取注册父域，如 .example.com
   }
   function readCookie(k) {
     var m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));

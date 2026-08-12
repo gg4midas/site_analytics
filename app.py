@@ -787,7 +787,7 @@ class StatEngine(object):
     def _normalize_site(s):
         """宽松归一化：保留子域与 www. 前缀、允许单标签（如 test / localhost）。
         仅做「去协议 / 去路径 / 去端口 / 小写」这类无害清洗，不做 www 剥离，
-        以免多语言站点（de.bio-starch.com 与 www.bio-starch.com）被误合并。"""
+        以免多语言站点（de.example.com 与 www.example.com）被误合并。"""
         s = (s or '').strip()
         if not s:
             return ''
@@ -811,8 +811,8 @@ class StatEngine(object):
 
     @staticmethod
     def _domain_root(s):
-        """提取主域：de.bio-starch.com -> bio-starch.com；www.bio-starch.com -> bio-starch.com；
-        bio-starch.com 保持不变；localhost / test 等单标签保持不变。"""
+        """提取主域：de.example.com -> example.com；www.example.com -> example.com；
+        example.com 保持不变；localhost / test 等单标签保持不变。"""
         s = (s or '').strip().lower()
         if not s or s == 'localhost':
             return s
@@ -861,7 +861,7 @@ class StatEngine(object):
         if not site:
             return False
         root = self._domain_root(site)
-        # 删除主域及所有子域（如 bio-starch.com + *.bio-starch.com）
+        # 删除主域及所有子域（如 example.com + *.example.com）
         try:
             conn = self._conn()
             conn.execute("DELETE FROM sites WHERE site=? OR site LIKE ?", (root, '%.' + root))

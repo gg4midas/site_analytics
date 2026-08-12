@@ -1,7 +1,7 @@
 # WPML 多语言站点 · 单 JS 部署与监控说明
 
 ## 背景
-你的网站是用 WPML 实现的一套 WordPress 代码、多个语言域名（www / de / fr.bio-starch.com 等）。
+你的网站是用 WPML 实现的一套 WordPress 代码、多个语言域名（www / de / fr.example.com 等）。
 各语言共享同一套主题与模板，因此**不能、也不必为每个语言域分别部署 tracker.js**。
 
 ## 核心机制（已支持）
@@ -9,8 +9,8 @@ tracker.js 加载时自动读取当前访问的域名：
 
     SITE = 脚本标签的 data-site 属性 || location.hostname
 
-只要部署时**不写 data-site**，它就用浏览器当前所在的语言域名（如 de.bio-starch.com）作为站点标识上报。
-后端对 www / de / fr 等域名按**主域归并展示**：看板下拉框只列出主域（bio-starch.com / hemp-land.com），选中主域后统计自动聚合其下所有子域，并在概览页「站点 / 语言分布」卡片与访客表、实时表的「站点」列中显示各子域（www / de / fr）的明细。这样既不会把几十个子域散成一长串，又能在统计时按语言区分。
+只要部署时**不写 data-site**，它就用浏览器当前所在的语言域名（如 de.example.com）作为站点标识上报。
+后端对 www / de / fr 等域名按**主域归并展示**：看板下拉框只列出主域（example.com / example.org），选中主域后统计自动聚合其下所有子域，并在概览页「站点 / 语言分布」卡片与访客表、实时表的「站点」列中显示各子域（www / de / fr）的明细。这样既不会把几十个子域散成一长串，又能在统计时按语言区分。
 
 ## 推荐部署方式：动态注入 loader（一次粘贴，永不需 exclude）
 在共享模板放一段极短的内联 loader（复制到 `header.php` 的 `</head>` 前，或通过主题的 `wp_head` 钩子）。
@@ -45,13 +45,13 @@ WP 缓存/合并插件（WP Rocket、Autoptimize、W3 Total Cache、WP-Optimize 
 
 ## 监控结果
 部署后，看板站点列表会自动出现（各自独立统计：访客、页面、来源、地域等）：
-- www.bio-starch.com
-- de.bio-starch.com
-- fr.bio-starch.com
+- www.example.com
+- de.example.com
+- fr.example.com
 - （以及其它语言域名）
 
 ## 注意事项
-- 跨域上报：tracker.js 从 bio-starch.com 上报到分析域名属于跨域请求，后端 /api/event 已配置 CORS，可正常接收。
+- 跨域上报：tracker.js 从 example.com 上报到分析域名属于跨域请求，后端 /api/event 已配置 CORS，可正常接收。
 - 不要为每种语言分别嵌入不同 data-site 的脚本——单 JS 方案即可完成多语言区分。
 - 不要在被本地化后的本地路径上依赖自动 ENDPOINT；始终用 loader 显式带 data-endpoint。
 - 若将来改用「同一域名 + ?lang=xx 参数」模式（非域名级多语言），需另加 URL 参数识别，当前域名级方案无需处理。
