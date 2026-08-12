@@ -581,6 +581,8 @@ var I18N_EN = {
 '近 {n} 分钟 PV':'Last {n} min PV','近 {n} 分钟':'Last {n} min','监听中':'Monitoring','实时':'Live',
 '未配置 GeoIP 数据库':'GeoIP database not configured',
 '提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。':'Hint: download GeoLite2-City.mmdb into geoip/ and restart app.py.',
+'未安装 maxminddb 库':'maxminddb library not installed',
+'提示：pip install maxminddb 后可启用访客地域与运营商(ISP)识别。':'Hint: run "pip install maxminddb" to enable GeoIP and ISP (operator) recognition.',
 '所选周期内暂无地域数据':'No geo data in selected period',
 '暂无地域数据':'No geo data',
 '高':'High','低':'Low',
@@ -1694,6 +1696,12 @@ function renderGeo(d){
   loadWorldMap(function(){
     var c1 = initChart('chartMap'); applyChartTheme(c1);
     if(!c1) return;
+    if(!d.maxminddb_available){
+      c1.clear();
+      c1.setOption({title:{text:t('未安装 maxminddb 库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：pip install maxminddb 后可启用访客地域与运营商(ISP)识别。');
+      return;
+    }
     if(!d.geo_enabled){
       c1.clear();
       c1.setOption({title:{text:t('未配置 GeoIP 数据库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});

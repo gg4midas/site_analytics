@@ -430,6 +430,25 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 
 ---
 
+## 异常流量标注与软屏蔽
+
+为提升统计信噪比，面板对疑似非真实访客自动标注，且支持**无损软屏蔽**（原始事件保留、可恢复）。
+
+### 运营商（ISP）识别
+基于 GeoLite2-ASN 库（需安装 `maxminddb` 并放置 `geoip/GeoLite2-ASN.mmdb`），服务端按访客 IP 解析运营商。内网 / 本地 IP 显示「(内网/本地)」；未装 ASN 库或库缺失时该列留空、不报错。
+
+### 疑似异常访客标注（满足任一即标记）
+- **数据中心 / 云主机 / 爬虫托管 ISP**：运营商命中已知 AS 号或组织名关键词（AWS、Google Cloud、Azure、阿里云、腾讯云、华为云、Baidu、Cloudflare、OVH、Vultr、Hetzner、Datacamp、M247、Leaseweb 等；刻意排除 Starlink 等住宅卫星网络以免误伤真实用户）。显示为紫色「疑似数据采集」徽章。
+- **单访客浏览量畸高**：该访客 PV ≥ 全部访客 PV 中位数 × 8，且 ≥ 30，且样本 ≥ 5 位访客时命中。显示为橙色「浏览量畸高」徽章。
+- 两类条件为「或」关系，可并存；访客页顶部提示分别计数（`suspect_dc_count` / `suspect_highpv_count`）。
+
+> 标注依赖 ISP 解析，须确保 ASN 库已部署并定期更新（`bash update_geoip.sh`），且反向代理已透传真实访客 IP（见「真实 IP 透传」）；若置于隐藏真实 IP 的代理之后，全部流量会被误判为机房网络。
+
+### 软屏蔽（仅排除、可恢复）
+在访客 / 实时监控表点该访客的「剔除」，即把其加入 `blocked_visitors`。所有统计经数据库视图 `visible_events` 自动排除其数据，但**原始事件完整保留**，可随时在「站点管理 → 已屏蔽访客」点「恢复」还原。读统计走视图、上报 / 删除等基表操作仍走 `events`，故屏蔽不丢原始数据、可无损还原。
+
+---
+
 ## 隐私与合规
 
 - 不采集表单内容、不采集精确 GPS 坐标。
@@ -447,6 +466,22 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 - **地域为空**：GeoIP 未启用——确认已 `pip install maxminddb`、已下载 `.mmdb`、且重启了后端。
 - **全部访客显示同一 IP / 内网**：反向代理未透传 `X-Forwarded-For`，参照「真实 IP 透传」配置。
 - **端口占用**：`sa-console 重启` 会自动按端口定位进程并释放；或 `bash restart.sh`、`lsof -i :8899` / `fuser -k 8899/tcp` 手动释放后重启。
+
+### 数据停留在某天，之后没有新数据
+看板数据停在某一日（如只有 7/9、7/10），说明之后 tracker 未成功上报。按序排查：
+
+1. **确认部署代码是「通用部署代码」且已生效**：在 WP 后台确认 `</head>` 前存在那段**动态注入 loader**（以 `<script>(function(){...` 开头），而非旧的直接 `<script src=.../tracker.js>`。旧方式易被缓存插件本地化而失效。
+2. **清缓存**：到 WP 缓存插件（WP Rocket / Autoptimize / W3TC 等）点「清空缓存」，避免浏览器 / 服务器返回旧页面与脚本。
+3. **用调试模式验证上报**：在 loader 标签上加 `data-debug="true"`，打开浏览器控制台（F12 → Console），正常应看到：
+   ```
+   [tracker] site=de.example.com endpoint=https://你的分析域名/api/event
+   [tracker] POST status 200
+   ```
+   若 `fetch failed` 或被 CSP / 网络拦截，检查分析域名是否可公网访问、有无跨域 / 防火墙限制。
+4. **确认分析服务在跑**：`curl -I http://127.0.0.1:8899/` 应返回 200；`ps aux | grep app.py` 确认进程在运行（或用 `sa-console status`）。
+5. 排除上述后仍有缺口，多为某段时间站点无真实访问或当时未部署 tracker，属正常；补部署并清缓存后新访问会实时进入看板。
+
+> 多语言（WPML）子域：只需在「+ 添加站点」填**主域名**（不含 `www`，如 `example.com`），同一段代码粘贴到 `www` / `de` / `fr` 等子域，tracker 自动按 `location.hostname` 上报并归并，勿为每个子域分别添加。
 
 ---
 

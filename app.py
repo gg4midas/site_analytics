@@ -44,7 +44,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -188,6 +188,11 @@ class StatEngine(object):
 
     def geo_enabled(self):
         return self._geo_reader is not None
+
+    def maxminddb_available(self):
+        """maxminddb 库是否已安装（无论数据库文件是否存在）。用于前端区分
+        「库未安装」与「库已装但 GeoIP/ASN 数据库文件缺失」两种降级原因。"""
+        return maxminddb is not None
 
     def resolve_geo(self, ip):
         """返回 {'code','country','city'} 或 None。私有/内网 IP 标记为本地的。
@@ -1644,6 +1649,7 @@ class StatEngine(object):
             'device': device, 'browser': browser, 'os': os_dist,
             'geo_tree': geo_tree, 'countries': geo_tree,
             'geo_enabled': self.geo_enabled(),
+            'maxminddb_available': self.maxminddb_available(),
             # 新增指标
             'online': online,
             'new_returning': nr,
