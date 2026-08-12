@@ -1,5 +1,10 @@
 # Site Analytics · 站点流量统计
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.7%2B-blue.svg)](https://www.python.org)
+[![Self-hosted](https://img.shields.io/badge/Self--hosted-%E2%9C%93-brightgreen.svg)]()
+[![Privacy-friendly](https://img.shields.io/badge/Privacy--friendly-%E2%9C%93-brightgreen.svg)]()
+
 轻量、自托管、隐私友好的网站访问分析工具。**基于前端埋点，不依赖任何访问日志。**
 
 通过在被统计的网页中嵌入一段极轻量的 JS（`tracker.js`），由**真实访客的浏览器**主动上报访问事件。
@@ -24,6 +29,25 @@
 - **公开上报端点**（`/api/event`，CORS 开放），面板与查询接口**可选 token 鉴权（默认关闭，非必需）**。
 - **反作弊**：自动剔除 `navigator.webdriver` 与已知爬虫 UA。
 - **反向代理友好**：通过 `X-Forwarded-For` / `X-Real-IP` 还原真实访客 IP。
+
+---
+
+## 界面一览（功能模块）
+
+分析面板（`index.html`）为单页仪表盘，顶栏可切换 **中 / EN** 语言、切换深色 / 浅色主题、手动刷新。包含以下模块：
+
+| 模块 | 内容 |
+|------|------|
+| 概览 | PV / UV / 会话 / 跳出率 / 平均停留等核心 KPI，访问趋势、访问深度、新访客 vs 回访客、设备分布 |
+| 访客 | 访客明细（来路、设备/浏览器、运营商、地区、停留、最近活跃），潜在目标客户与疑似爬虫/数据采集标记 |
+| 内容 | 热门页面、落地页 TOP、退出页 TOP、页面平均停留 TOP |
+| 性能 | 前端性能采样（FCP / LCP / TTFB / CLS / Speed Index） |
+| 来源 | 来源类型分布、来源域名 TOP |
+| 地域 | 世界地图 + 国家/地区排行 + 城市 TOP（需启用 GeoIP） |
+| 实时监控 | 近 5 / 10 / 30 分钟访客流，每 5 秒轮询 |
+| 站点管理 | 添加/删除站点、生成埋点代码、设置数据保留期、管理被屏蔽访客 |
+
+> 截图待补充——欢迎按 [CONTRIBUTING](CONTRIBUTING.md) 认领，或本地运行后提交真实截图。
 
 ---
 
@@ -360,12 +384,14 @@ proxy_set_header X-Real-IP $remote_addr;
 
 ## 贡献
 
-欢迎提交 Issue 与 Pull Request。本地开发与运行只需 Python 标准库，无需额外环境。
+欢迎 Issue 与 Pull Request！开发指南见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-> 许可证：本项目以开源方式发布。若尚未添加 `LICENSE` 文件，建议补充一份（如 MIT）以明确授权方式。
+- 本地开发与运行**只需 Python 标准库**，无需额外环境；仅启用 GeoIP 时才需 `pip install maxminddb`。
+- 提交前请确认 `python3 app.py` 可正常启动、面板可打开。
+- 代码风格保持与现有单文件 `app.py` / `index.html` 一致（零外部依赖优先）。
 
 ---
 
 ## 许可证
 
-详见仓库根目录 `LICENSE` 文件（如未提供，请以仓库实际声明为准）。
+本项目以 [MIT License](LICENSE) 开源——可自由使用、修改、分发，但**不提供担保**，作者不对使用后果负责。请在分发时保留版权与许可声明。
