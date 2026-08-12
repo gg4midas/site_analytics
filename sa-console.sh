@@ -174,11 +174,11 @@ app_version() {
   echo "${v:-未知}"
 }
 
-# 取最新 Release 的 tag（无 Release 时返回空）
+# 取「版本号最高」的 Release tag（按 semver 排序，而非发布时间；无 Release 时返回空）。
+# 注意：GitHub /releases/latest 按「发布时间」返回，并非最高版本，故这里用全量列表 + sort -V 取最大。
 latest_release_tag() {
-  [ -x "$(command -v curl)" ] || command -v curl >/dev/null 2>&1 || { echo ""; return; }
-  curl -s --max-time 10 -H "Accept: application/vnd.github+json" "$GH_API/releases/latest" 2>/dev/null \
-    | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
+  command -v curl >/dev/null 2>&1 || { echo ""; return; }
+  list_release_tags | sort -V | tail -1
 }
 
 # 列出所有 Release tag（按 GitHub 返回顺序，通常最新在前）
