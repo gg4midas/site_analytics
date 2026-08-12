@@ -232,9 +232,9 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
       <select id="selRange" onchange="onRangeChange()"></select>
       <span id="customRangePanel" class="custom-range" style="display:none">
         <input type="date" id="dateStart" onchange="syncCustomRange()">
-        <span class="range-sep">至</span>
+        <span class="range-sep" data-i18n="至">至</span>
         <input type="date" id="dateEnd" onchange="syncCustomRange()">
-        <button class="btn" onclick="applyCustomRange()">应用</button>
+        <button class="btn" onclick="applyCustomRange()" data-i18n="应用">应用</button>
       </span>
     </div>
     <button class="btn ghost mini" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
@@ -345,7 +345,7 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
       </div>
     </div>
     <div class="section card">
-      <div class="ct">全部热门页面（按访问量）</div>
+      <div class="ct" data-i18n="全部热门页面（按访问量）">全部热门页面（按访问量）</div>
       <table id="tblPages3" class="pages-table"></table>
     </div>
   </section>
@@ -357,11 +357,11 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
       <div class="seg" id="perfDevSeg"></div>
     </div>
     <div class="section card">
-      <div class="ct">页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）</div>
+      <div class="ct" data-i18n="页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）">页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）</div>
       <div id="perfSummary" class="perf-summary"></div>
     </div>
     <div class="section card">
-      <div class="ct">各页面性能（按采样数）</div>
+      <div class="ct" data-i18n="各页面性能（按采样数）">各页面性能（按采样数）</div>
       <table id="tblPerf" class="pages-table"></table>
       <div class="note" data-i18n="指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。">指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。</div>
     </div>
@@ -381,9 +381,9 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
       </div>
     </div>
     <div class="section card">
-      <div class="ct">具体来源域名 TOP（按独立访客）</div>
+      <div class="ct" data-i18n="具体来源域名 TOP（按独立访客）">具体来源域名 TOP（按独立访客）</div>
       <table id="tblRef"></table>
-      <div class="note">说明：仅当访客来自「带 Referrer」的站点才能识别来源；若对方站点设置了 <code>Referrer-Policy: no-referrer</code> 或浏览器未发送来路，则归为「直接访问」。搜索引擎 / AI 工具 / 社交媒体的识别依赖来路域名，无法穿透无来路的流量——这是所有 first-party 埋点统计的共性。各域名仅展示 TOP 15，其独立访客数之和可能小于总独立访客数。</div>
+      <div class="note" data-i18n-html="说明：仅当访客来自「带 Referrer」的站点才能识别来源；若对方站点设置了 <code>Referrer-Policy: no-referrer</code> 或浏览器未发送来路，则归为「直接访问」。搜索引擎 / AI 工具 / 社交媒体的识别依赖来路域名，无法穿透无来路的流量——这是所有 first-party 埋点统计的共性。各域名仅展示 TOP 15，其独立访客数之和可能小于总独立访客数。">说明：仅当访客来自「带 Referrer」的站点才能识别来源；若对方站点设置了 <code>Referrer-Policy: no-referrer</code> 或浏览器未发送来路，则归为「直接访问」。搜索引擎 / AI 工具 / 社交媒体的识别依赖来路域名，无法穿透无来路的流量——这是所有 first-party 埋点统计的共性。各域名仅展示 TOP 15，其独立访客数之和可能小于总独立访客数。</div>
     </div>
   </section>
 
@@ -438,9 +438,9 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
     </div>
     <div class="modal-body">
       <div class="deploy-code">
-        <div class="dc-title">① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 <code>&lt;/head&gt;</code> 前）</div>
+        <div class="dc-title" data-i18n-html="① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 <code></head></code> 前）">① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 <code></head></code> 前）</div>
         <div class="dc-note" data-i18n="一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。">一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。</div>
-        <div class="code-box"><pre id="deployCode"></pre><button class="mini" onclick="copyText('deployCode')">复制</button></div>
+        <div class="code-box"><pre id="deployCode"></pre><button class="mini" onclick="copyText('deployCode')" data-i18n="复制">复制</button></div>
       </div>
       <div class="add-row">
         <input id="newSite" data-i18n-attr="placeholder:要监控的域名，如 example.com（可选）" placeholder="要监控的域名，如 example.com（可选）">
@@ -506,7 +506,7 @@ var I18N_EN = {
 '实时访客流':'Realtime Visitors',
 '时间窗口':'Time Window',
 '站点管理':'Site Management',
-'① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 </head> 前）':'① Copy this snippet into your site (e.g. before </head> in your WP theme header)',
+'① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 <code></head></code> 前）':'① Copy this snippet into your site (e.g. before <code></head></code> in your WP theme header)',
 '一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。':'One snippet monitors all language domains (www / de / fr etc.), auto-separated by visited domain—no per-domain deployment; it also bypasses cache-plugin localization automatically. The domain is auto-filled from the current dashboard URL.',
 '要监控的域名，如 example.com（可选）':'Domain to monitor, e.g. example.com (optional)',
 '备注名（可选）':'Label (optional)',
@@ -548,9 +548,9 @@ var I18N_EN = {
 '单访客浏览量畸高，疑似爬虫':'Single visitor with abnormally high pageviews, suspected crawler',
 '访问页面（{n} 个不同页面 · 共 {m} 次动作）':'Visited pages ({n} distinct · {m} actions)',
 '路径':'Path','最后访问':'Last visit',
-'日期':'Date','新访客':'New','回访客':'Returning','来源类型':'Source Type','来源域名':'Referrer Domain','访问量':'Pageviews',
+'上期':'Prev','日期':'Date','新访客':'New','回访客':'Returning','来源类型':'Source Type','来源域名':'Referrer Domain','访问量':'Pageviews',
 '暂无被屏蔽的访客。':'No blocked visitors.',
-'恢复失败：':'Restore failed: ','未知错误':'Unknown error','请求失败，请重试':'Request failed, please retry',
+'恢复失败：':'Restore failed: ','未知错误':'Unknown error','未知':'Unknown','请求失败，请重试':'Request failed, please retry',
 '该窗口内暂无访问记录':'No visits in this window',
 '时间':'Time','站点':'Site','PV / 页':'PV / Page',
 '近 {n} 分钟 PV':'Last {n} min PV','近 {n} 分钟':'Last {n} min','监听中':'Monitoring','实时':'Live',
@@ -580,13 +580,14 @@ var I18N_EN = {
 '确定删除站点「{n}」及其全部访问数据？\n此操作不可恢复。':'Delete site "{n}" and ALL its visit data? This cannot be undone.',
 '已删除站点 {n}（含全部访问数据）。':'Deleted site {n} (with all visit data).',
 '删除失败：':'Delete failed: ',
-'位':'',
+'位':'',' 秒':' sec',' 分 ':' min ',' 时 ':' hr ',' 分':' min',
 '访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户':'Visitors whose URL contains a product page (/product, /products, etc.) or contact page and their multilingual variants (FR/DE/IT/NL/ES/JA/KO) are treated as potential leads',
 '指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。':'Metrics (aligned with PageSpeed Insights field data): FCP, LCP, TTFB, CLS, Speed Index, all in seconds (CLS dimensionless). Top cards use the 75th percentile (p75, consistent with PSI), more robust to outliers than the mean; the table shows per-page means. Color thresholds: green=good / yellow=needs improvement / red=poor. Speed Index is a browser-estimated visual-completeness value (not Lighthouse frame-by-frame), for trend reference only. Aggregation filters outliers > 60s and CLS > 2. Auto-refresh every 60s; pauses when expanding visitor details or opening a modal; click "Refresh" (top-right) to refresh manually.',
 '说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。':'Note: each visitor is attributed to their landing source (first Referrer in the window) as the unique owner, so the sum of per-source unique visitors equals the overview total, with no double counting.',
+'说明：仅当访客来自「带 Referrer」的站点才能识别来源；若对方站点设置了 <code>Referrer-Policy: no-referrer</code> 或浏览器未发送来路，则归为「直接访问」。搜索引擎 / AI 工具 / 社交媒体的识别依赖来路域名，无法穿透无来路的流量——这是所有 first-party 埋点统计的共性。各域名仅展示 TOP 15，其独立访客数之和可能小于总独立访客数。':'Note: a visitor\'s source is only identified when they arrive from a site that sends a Referrer; if the source site sets <code>Referrer-Policy: no-referrer</code> or the browser sends no referrer, it is counted as "Direct". Search engines / AI tools / social media are identified by referrer domain and cannot be detected through refererless traffic—this is common to all first-party analytics. Only the top 15 domains are shown; their unique-visitor sums may be less than the total.',
 '仅展示所选窗口内的事件，并按时间倒序（最新在最前）。数据由访客浏览器实时上报。':'Shows only events within the selected window, sorted newest-first. Data is reported in real time by visitor browsers.',
 '未获取到站点':'No sites retrieved',
-'预设':'Presets',
+'预设':'Presets','月份':'Month',
 '流量异常：当前区间浏览量':'Traffic anomaly: pageviews ',
 ' 较上一等长区间':' vs previous equal-length period ',
 ' 增长约':' up ~',
@@ -626,6 +627,8 @@ function applyI18n(){
       if(kv.length===2){ el.setAttribute(kv[0].trim(), t(kv[1].trim())); }
     }
   }
+  var htmls = document.querySelectorAll('[data-i18n-html]');
+  for(var h2=0;h2<htmls.length;h2++){ htmls[h2].innerHTML = t(htmls[h2].getAttribute('data-i18n-html')); }
   var tb = document.getElementById('langToggle');
   if(tb) tb.textContent = (SA_LANG==='en') ? '中' : 'EN';
 }
@@ -633,6 +636,8 @@ function switchLang(lang){
   SA_LANG = (lang==='en') ? 'en' : 'zh';
   localStorage.setItem('sa_lang', SA_LANG);
   applyI18n();
+  var og = document.querySelector('#selRange optgroup');
+  if(og) og.label = t('月份');
   if(currentSite){ loadData(); } else { initRangeSelector(); }
   applyThemeAttr();
 }
@@ -691,11 +696,11 @@ function fmtNum(n){ n=Number(n)||0; return n.toLocaleString('en-US'); }
 function fmtBytes(b){ return fmtNum(b); }
 function fmtDuration(sec){
   sec=Number(sec)||0;
-  if(sec<60) return sec+' 秒';
+  if(sec<60) return sec+t(' 秒');
   var m=Math.floor(sec/60), s=sec%60;
-  if(m<60) return m+' 分 '+(s? s+' 秒':'');
+  if(m<60) return m+t(' 分 ')+(s? s+t(' 秒'):'');
   var h=Math.floor(m/60); m=m%60;
-  return h+' 时 '+(m? m+' 分':'');
+  return h+t(' 时 ')+(m? (m+t(' 分')):'');
 }
 function pct(cur, prev){
   cur=Number(cur)||0; prev=Number(prev)||0;
@@ -708,8 +713,8 @@ function prevTip(v){
   if(v===undefined||v===null||v==='') return '';
   v=Number(v);
   if(isNaN(v)||v===0) return '';
-  if(v>=1) return '上期 '+fmtNum(Math.round(v));
-  return '上期 '+v;
+  if(v>=1) return t('上期')+' '+fmtNum(Math.round(v));
+  return t('上期')+' '+v;
 }
 
 function initChart(id){
@@ -743,7 +748,7 @@ var COUNTRY_CN = {"AD": "安道尔", "AE": "阿联酋", "AF": "阿富汗", "AG":
 function cnName(cc, fallback){
   cc = (cc||'').toUpperCase();
   if(COUNTRY_CN[cc]) return COUNTRY_CN[cc];
-  return (fallback && fallback!=='') ? fallback : (cc || '未知');
+  return (fallback && fallback!=='') ? fallback : (cc || t('未知'));
 }
 
 // 常见城市英文 -> 中文（GeoLite2 城市多为英文，补充展示语言）
@@ -932,7 +937,7 @@ function initRangeSelector(){
             var val = 'month:'+ym;
             mopts += '<option value="'+val+'"'+(val===currentRange?' selected':'')+'>'+label+'</option>';
           }
-          sel.innerHTML = opts + (mopts ? '<optgroup label="月份">'+mopts+'</optgroup>' : '');
+          sel.innerHTML = opts + (mopts ? '<optgroup label="'+t('月份')+'">'+mopts+'</optgroup>' : '');
           // 若当前选中的月份已无数据（如切换站点后），回退到今天
           var still = false;
           for(var k=0;k<sel.options.length;k++){ if(sel.options[k].value===currentRange){ still=true; break; } }
@@ -1269,10 +1274,10 @@ function renderPerf(d){
     var devs = Object.keys(bd);
     var order = ['桌面','手机','平板'];
     devs.sort(function(a,b){ var ia=order.indexOf(a), ib=order.indexOf(b); if(ia<0)ia=99; if(ib<0)ib=99; return ia-ib; });
-    var html = '<button class="seg-btn'+(currentPerfDevice==='all'?' active':'')+'" onclick="clickPerfDevice(\'all\', this)">全部</button>';
+    var html = '<button class="seg-btn'+(currentPerfDevice==='all'?' active':'')+'" onclick="clickPerfDevice(\'all\', this)">'+t('全部')+'</button>';
     for(var i=0;i<devs.length;i++){
       var dv=devs[i]; var cnt=(bd[dv]&&bd[dv].count)||0;
-      html += '<button class="seg-btn'+(currentPerfDevice===dv?' active':'')+'" onclick="clickPerfDevice(\''+dv+'\', this)">'+dv+' <span class="seg-cnt">'+fmtNum(cnt)+'</span></button>';
+      html += '<button class="seg-btn'+(currentPerfDevice===dv?' active':'')+'" onclick="clickPerfDevice(\''+dv+'\', this)">'+t(dv)+' <span class="seg-cnt">'+fmtNum(cnt)+'</span></button>';
     }
     seg.innerHTML = html;
   }
