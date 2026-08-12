@@ -1,0 +1,15 @@
+[Unit]
+Description=Site Analytics (client-side, log-free)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/site_analytics
+ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899 --token 你的令牌
+Restart=always
+RestartSec=3
+StandardOutput=append:/opt/site_analytics/data/app.log
+StandardError=append:/opt/site_analytics/data/app.log
+
+[Install]
+WantedBy=multi-user.target

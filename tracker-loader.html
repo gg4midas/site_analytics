@@ -1,0 +1,35 @@
+<!--
+  tracker.js 通用部署片段（绕过 WP 缓存插件本地化 / 合并，无需 per-site exclude）
+  ----------------------------------------------------------------------------
+  用途：每个站点只粘贴下面这一段，永久有效，不必去缓存插件后台加 exclude 规则。
+  原理：这是一段「内联」脚本，在浏览器运行时才动态创建 <script> 去加载远程
+        tracker.js。WP 缓存插件在 PHP 输出 HTML 阶段只扫描页面里的 <script src="...">，
+        而此刻页面里没有外部 src（只有这段内联 loader），所以插件无从本地化/合并；
+        等插件输出阶段结束、脚本运行时再去拉远程 tracker.js，插件早已看不到它。
+  多语言（WPML）：不要写 data-site，tracker 自动用当前域名区分 www/de/fr。
+  把「你的分析域名」替换为实际部署了 tracker.js + /api/event 的域名。
+-->
+<script>
+(function () {
+  var s = document.createElement('script');
+  s.src = 'https://你的分析域名/tracker.js';
+  s.defer = true;
+  // 多语言 / WPML：省略下一行，tracker 自动按 location.hostname 区分各语言域名
+  // s.setAttribute('data-site', 'example.com');
+  // 显式上报端点：即使 tracker.js 万一被本地化也不会算错地址
+  s.setAttribute('data-endpoint', 'https://你的分析域名/api/event');
+  document.head.appendChild(s);
+})();
+</script>
+
+<!--
+  ============================================================================
+  备选方案（最稳，免疫一切缓存 / 延迟插件）：把 tracker.js 完整内容直接内联。
+  适用于个别激进插件（如开启 "Delay JS"）仍拦截运行时 script 的情况。
+  代价：以后更新 tracker 逻辑时需重新粘贴整段。
+  用法：将 tracker.js 的全部源码粘贴到下面的 <script> ... </script> 之间：
+  <script>
+    ... 在此粘贴 tracker.js 全文 ...
+  </script>
+  ============================================================================
+-->

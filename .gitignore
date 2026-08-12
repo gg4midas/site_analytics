@@ -1,0 +1,20 @@
+# 运行时数据与日志
+data/
+*.db
+*.sqlite
+*.log
+nohup.out
+run.log
+# 构建 / 部署镜像
+site_analytics_final/
+*.zip
+# 本地备份与临时文件
+_backup_*/
+_trash/
+# Python
+__pycache__/
+*.pyc
+# 真实流量分析报告（含已部署站点数据，不入库）
+events分析_异常流量报告.md
+# GeoIP 二进制数据库（运行时用 ./update_geoip.sh 拉取，避免大文件入库）
+geoip/*.mmdb
