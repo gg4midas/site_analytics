@@ -87,7 +87,7 @@ site_analytics/
 │   └── echarts.min.js      # 本地图表库（已随仓库，无需联网）
 ├── start.sh                # 启动脚本（后台运行，写 run.log）
 ├── restart.sh              # 重启脚本
-├── sa-console.sh           # 服务器管理控制台：启停 / 重启 / 版本检查 / 一键升级
+├── sa-console.sh           # 服务器管理控制台：启停 / 重启 / 版本检查升级 / 一键回滚
 ├── site_analytics.service  # systemd 服务单元示例
 ├── update_geoip.sh         # 下载 / 更新 GeoLite2 数据库（City + ASN）
 ├── geoip/                  # 运行时放置 GeoLite2-*.mmdb（需自行下载，未入库）
@@ -297,24 +297,27 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 
 ```text
 =========== site_analytics 服务管理控制台 ===========
- 1: 检查版本更新
- 2: 启动服务
- 3: 关闭服务
- 4: 重启服务
+ 1: 检查版本更新（升级）
+ 2: 回滚到旧版本
+ 3: 启动服务
+ 4: 关闭服务
+ 5: 重启服务
  0: 退出
 ======================================================
 ```
 
-- **1 检查版本更新**：读取 `app.py` 里的 `VERSION`，联网比对 GitHub `main` 分支最新版本；若发现新版本，确认后自动下载覆盖并重启（保留数据库与本地配置）。
-- **2 启动 / 3 关闭 / 4 重启**：兼容「`nohup` + `start.sh`」与「systemd 服务」两种运行方式；按监听端口反查进程，状态显示准确。
+- **1 检查版本更新**：读取 `app.py` 里的 `VERSION`，联网比对 GitHub 上**最新的 Release**；若发现新版本，确认后自动下载对应 tarball 覆盖并重启（保留 `data/` 数据库与本地配置）。
+- **2 回滚到旧版本**：列出 GitHub 上所有已发布的 Release，选择其一即可把代码回滚到该版本（同样保留 `data/` 数据库与本地配置，并重启服务）。当某次升级出现问题时，可用它快速回退到上一个稳定版。
+- **3 启动 / 4 关闭 / 5 重启**：兼容「`nohup` + `start.sh`」与「systemd 服务」两种运行方式；按监听端口反查进程，状态显示准确。
 
 ### 单命令（便于脚本 / 监控调用）
 
 ```bash
 sa-console start | stop | restart | status | update
+sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 ```
 
-> 当前版本号记录在 `app.py` 的 `VERSION` 常量中（发版时改此处即可，控制台会自动比对并提示升级）。
+> 版本管理基于 **GitHub Release**：先在 GitHub 上发布一个带 `vX.Y.Z` 标签的 Release，控制台才能检查 / 升级 / 回滚。当前版本号记录在 `app.py` 的 `VERSION` 常量中（发版时改此处即可，控制台会自动比对并提示升级）。
 
 ---
 

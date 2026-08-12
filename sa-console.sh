@@ -2,17 +2,24 @@
 # ============================================================================
 #  site_analytics 服务管理控制台（精简版）
 #  用法（在服务器上）：
-#     bash sa-console.sh            # 交互式菜单
-#     sa-console                    # 若已软链到 /usr/local/bin（见文末说明）
-#     sa-console start|stop|restart|status|update   # 单命令（便于脚本调用）
+#     bash sa-console.sh                              # 交互式菜单
+#     sa-console                                      # 若已软链到 /usr/local/bin
+#     sa-console start|stop|restart|status|update     # 单命令（便于脚本调用）
+#     sa-console rollback <tag>                        # 单命令回滚（如 v1.2.0）
 #  说明：自动定位安装目录（优先脚本同级目录，其次 /opt/site_analytics），
 #        兼容「nohup + start.sh」与「systemd 服务」两种运行方式。
+#  版本管理：检查 / 升级 / 回滚均基于 GitHub Release（tarball）。
+#        升级与回滚都会保留 data/ 数据库与本地配置，仅覆盖代码文件。
 #  可选环境变量：SA_HOME  可强制指定安装目录（需含 app.py）。
 # ============================================================================
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.2.0"
+CONSOLE_VER="1.3.0"
+
+# GitHub 仓库（用于版本检查 / 升级 / 回滚）
+GITHUB_REPO="gg4midas/site_analytics"
+GH_API="https://api.github.com/repos/${GITHUB_REPO}"
 
 # ---- 定位安装目录 ----
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
@@ -156,7 +163,9 @@ do_logs() {
   fi
 }
 
-# ---- 版本 ----
+# ============================================================================
+#  版本管理（基于 GitHub Release）
+# ============================================================================
 app_version() {
   local v=""
   if [ -f app.py ]; then
@@ -165,74 +174,114 @@ app_version() {
   echo "${v:-未知}"
 }
 
+# 取最新 Release 的 tag（无 Release 时返回空）
+latest_release_tag() {
+  [ -x "$(command -v curl)" ] || command -v curl >/dev/null 2>&1 || { echo ""; return; }
+  curl -s --max-time 10 -H "Accept: application/vnd.github+json" "$GH_API/releases/latest" 2>/dev/null \
+    | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+# 列出所有 Release tag（按 GitHub 返回顺序，通常最新在前）
+list_release_tags() {
+  command -v curl >/dev/null 2>&1 || { echo ""; return; }
+  curl -s --max-time 10 -H "Accept: application/vnd.github+json" "$GH_API/releases?per_page=30" 2>/dev/null \
+    | grep -oE '"tag_name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+# 某 tag 的源码 tarball 下载地址
+release_tarball() { echo "https://github.com/${GITHUB_REPO}/archive/refs/tags/$1.tar.gz"; }
+
+# 把版本号归一化（去掉前导 v 与非数字字符）后比较：返回 0 表示 $1 >= $2
+ver_ge() { [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sed 's/[^0-9.]//g' | sort -V | tail -1)" = "${1#v}" ]; }
+
+# 下载指定 tag 的 tarball，覆盖代码文件（保留 data/ 数据库与本地配置），重启服务。
+# 同时被「升级」与「回滚」复用。
+do_install_release() {
+  local tag="$1" label="$2"
+  if ! command -v curl >/dev/null 2>&1; then echo "未找到 curl，无法下载。"; return 1; fi
+  local url; url="$(release_tarball "$tag")"
+  local tmp; tmp=$(mktemp -d)
+  echo "正在从 GitHub 下载 $tag ..."
+  if ! curl -sL --max-time 120 -o "$tmp/arc.tar.gz" "$url" 2>/dev/null; then
+    echo "下载失败，请检查网络或手动更新。"; rm -rf "$tmp"; return 1
+  fi
+  if [ ! -s "$tmp/arc.tar.gz" ]; then echo "下载内容为空，已中止。"; rm -rf "$tmp"; return 1; fi
+  mkdir -p "$tmp/x"
+  if ! tar -xzf "$tmp/arc.tar.gz" -C "$tmp/x" 2>/dev/null; then echo "解压失败。"; rm -rf "$tmp"; return 1; fi
+  local src; src=$(find "$tmp/x" -maxdepth 1 -mindepth 1 -type d | head -1)
+  if [ -z "$src" ] || [ ! -f "$src/app.py" ]; then echo "解包结果异常（未找到 app.py），已中止。"; rm -rf "$tmp"; return 1; fi
+  echo "已下载，正在覆盖文件（保留 data/ 数据库与本地配置）..."
+  do_stop
+  sleep 1
+  # 用 tar 同步代码文件，排除版本库 / 数据库 / 日志 / data（保留已采集数据）
+  ( cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' --exclude='geoip/GeoLite2-City.mmdb' . ) \
+    | ( tar -xf - -C "$INSTALL_DIR" )
+  [ -f "$INSTALL_DIR/sa-console.sh" ] && chmod +x "$INSTALL_DIR/sa-console.sh"
+  echo "已更新至 $(app_version)（$label）。"
+  rm -rf "$tmp"
+  do_start
+}
+
 do_update_check() {
   local cur; cur="$(app_version)"
   echo "控制台版本 : $CONSOLE_VER"
   echo "应用版本 : $cur"
   echo "安装目录 : $INSTALL_DIR"
   if ! command -v curl >/dev/null 2>&1; then
-    echo "未找到 curl，无法联网检查更新。"
-    return
+    echo "未找到 curl，无法联网检查更新。"; return
   fi
-  # 直接读取 GitHub main 分支 app.py 里的 VERSION（公开仓库用 raw URL，无需 Release/Tag）
-  local raw="https://raw.githubusercontent.com/gg4midas/site_analytics/main/app.py"
-  local latest
-  latest=$(curl -sL --max-time 10 "$raw" 2>/dev/null \
-            | grep -oE "VERSION\s*=\s*['\"][^'\"]+['\"]" | head -1 \
-            | sed -E "s/^[^'\"]*['\"]//; s/['\"]$//")
+  local latest; latest="$(latest_release_tag)"
   if [ -z "$latest" ]; then
-    echo "无法获取最新版本（无网络或 GitHub 不可达）。"
+    echo "尚未发布 GitHub Release，无法比对版本。"
+    echo "可到 https://github.com/${GITHUB_REPO}/releases 查看，或手动更新。"
     return
   fi
-  local cur_n latest_n
-  cur_n=$(echo "$cur" | sed -E 's/^v//; s/[^0-9.]//g')
-  latest_n=$(echo "$latest" | sed -E 's/^v//; s/[^0-9.]//g')
-  echo "最新版本 : $latest"
-  # 版本比较：以 latest 与 cur 做版本排序，若 cur 不低于 latest 则无需更新
-  if [ "$(printf '%s\n%s\n' "$latest_n" "$cur_n" | sort -V | tail -1)" = "$cur_n" ]; then
-    echo "已是最新版本（或更高）。"
+  echo "最新稳定版 : $latest"
+  if ver_ge "$cur" "$latest"; then
+    echo "已是最新稳定版。"
     return
   fi
   echo "发现新版本 $latest（当前 $cur）。"
   read -r -p "是否下载更新并重启？(y/N): " ans
   case "$ans" in
-    y|Y) do_upgrade;;
+    y|Y) do_install_release "$latest" "升级到 $latest";;
     *) echo "已取消。";;
   esac
 }
 
-do_upgrade() {
+do_rollback() {
   if ! command -v curl >/dev/null 2>&1; then
-    echo "未找到 curl，无法下载更新。"; return
+    echo "未找到 curl，无法联网获取版本列表。"; return
   fi
-  if ! command -v unzip >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-    echo "未找到 unzip/python3，无法解压更新包。"; return
-  fi
-  echo "正在从 GitHub 下载最新代码 ..."
-  local tmp; tmp=$(mktemp -d)
-  local zip="$tmp/main.zip"
-  if ! curl -sL --max-time 60 -o "$zip" "https://github.com/gg4midas/site_analytics/archive/refs/heads/main.zip" 2>/dev/null; then
-    echo "下载失败，请手动更新。"; rm -rf "$tmp"; return
-  fi
-  local src
-  if command -v unzip >/dev/null 2>&1; then
-    unzip -q -o "$zip" -d "$tmp" 2>/dev/null
-  else
-    python3 -c "import zipfile; zipfile.ZipFile('$zip').extractall('$tmp')" 2>/dev/null
-  fi
-  src=$(find "$tmp" -maxdepth 1 -type d -name 'site_analytics-*' | head -1)
-  if [ -z "$src" ] || [ ! -f "$src/app.py" ]; then
-    echo "解压结果异常，已中止。"; rm -rf "$tmp"; return
-  fi
-  echo "已下载，正在覆盖文件（保留 data/ 数据库与本地配置）..."
-  do_stop
-  sleep 1
-  # 用 tar 同步代码文件，排除版本库 / 数据库 / 日志 / data 目录
-  ( cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' . ) | ( tar -xf - -C "$INSTALL_DIR" )
-  [ -f "$INSTALL_DIR/sa-console.sh" ] && chmod +x "$INSTALL_DIR/sa-console.sh"
-  echo "文件已更新至 $(app_version)。"
-  rm -rf "$tmp"
-  do_start
+  local cur; cur="$(app_version)"
+  echo "当前版本 : $cur"
+  echo "可用版本（已发布到 GitHub 的 Release）："
+  local tags; tags="$(list_release_tags)"
+  if [ -z "$tags" ]; then echo "暂无可回滚的 Release。"; return; fi
+  local i=1 t
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    local mark=""; [ "$t" = "$cur" ] && mark=" (当前)"
+    printf "  %d: %s%s\n" "$i" "$t" "$mark"
+    i=$((i+1))
+  done <<< "$tags"
+  echo "  0: 取消"
+  local sel
+  read -r -p "请选择要回滚到的版本编号: " sel
+  if [ "$sel" = "0" ] || [ -z "$sel" ]; then echo "已取消。"; return; fi
+  local chosen="" j=1
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    if [ "$j" = "$sel" ]; then chosen="$t"; break; fi
+    j=$((j+1))
+  done <<< "$tags"
+  if [ -z "$chosen" ]; then echo "无效选择。"; return; fi
+  echo "即将回滚到 $chosen（会保留 data/ 数据库与本地配置，并重启服务）。"
+  read -r -p "确认？(y/N): " ans
+  case "$ans" in
+    y|Y) do_install_release "$chosen" "回滚到 $chosen";;
+    *) echo "已取消。";;
+  esac
 }
 
 # ============================================================================
@@ -241,10 +290,11 @@ do_upgrade() {
 show_menu() {
   echo
   echo "=========== site_analytics 服务管理控制台 ==========="
-  echo " 1: 检查版本更新"
-  echo " 2: 启动服务"
-  echo " 3: 关闭服务"
-  echo " 4: 重启服务"
+  echo " 1: 检查版本更新（升级）"
+  echo " 2: 回滚到旧版本"
+  echo " 3: 启动服务"
+  echo " 4: 关闭服务"
+  echo " 5: 重启服务"
   echo " 0: 退出"
   echo "======================================================"
 }
@@ -253,12 +303,13 @@ run_loop() {
   local choice
   while true; do
     show_menu
-    read -r -p "请输入操作编号 (0-4): " choice
+    read -r -p "请输入操作编号 (0-5): " choice
     case "$choice" in
       1) do_update_check;;
-      2) do_start;;
-      3) do_stop;;
-      4) do_restart;;
+      2) do_rollback;;
+      3) do_start;;
+      4) do_stop;;
+      5) do_restart;;
       0|q|Q) echo "再见。"; exit 0;;
       *) echo "无效选项：$choice";;
     esac
@@ -266,7 +317,7 @@ run_loop() {
 }
 
 # 支持「无参数」交互，或「单参数直接执行」便于脚本调用：
-#   sa-console status | start | stop | restart | update
+#   sa-console status | start | stop | restart | update | rollback <tag>
 case "${1:-}" in
   ""|menu) run_loop;;
   start)  do_start;;
@@ -274,5 +325,12 @@ case "${1:-}" in
   restart) do_restart;;
   status) do_status;;
   update) do_update_check;;
-  *) echo "未知命令: $1（支持: start|stop|restart|status|update）"; exit 1;;
+  rollback)
+    if [ -z "${2:-}" ]; then
+      echo "用法: sa-console rollback <tag>   （例如 sa-console rollback v1.2.0）"
+      echo "可用 tag 见: https://github.com/${GITHUB_REPO}/releases"
+      exit 1
+    fi
+    do_install_release "$2" "回滚到 $2";;
+  *) echo "未知命令: $1（支持: start|stop|restart|status|update|rollback <tag>）"; exit 1;;
 esac
