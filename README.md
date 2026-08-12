@@ -119,6 +119,9 @@ site_analytics/
 git clone https://github.com/gg4midas/site_analytics.git
 cd site_analytics
 
+# 国内访问 GitHub 缓慢时，可用 Gitee 镜像（与 GitHub 同步）：
+git clone https://gitee.com/operations-go_0/site_analytics.git
+
 # 2. 启动（默认监听 127.0.0.1:8899，无令牌，不依赖任何第三方库）
 python3 app.py
 
@@ -306,9 +309,30 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 ======================================================
 ```
 
-- **1 检查版本更新**：读取 `app.py` 里的 `VERSION`，联网比对 GitHub 上**最新的 Release**；若发现新版本，确认后自动下载对应 tarball 覆盖并重启（保留 `data/` 数据库与本地配置）。
-- **2 回滚到旧版本**：列出 GitHub 上所有已发布的 Release，选择其一即可把代码回滚到该版本（同样保留 `data/` 数据库与本地配置，并重启服务）。当某次升级出现问题时，可用它快速回退到上一个稳定版。
+- **1 检查版本更新**：读取 `app.py` 里的 `VERSION`，联网比对**最新的 Release**（默认 GitHub；若配置了国内镜像源则改从镜像读取）；若发现新版本，确认后自动下载对应 tarball 覆盖并重启（保留 `data/` 数据库与本地配置）。
+- **2 回滚到旧版本**：列出**所有已发布的 Release**（默认 GitHub；若配置了镜像源则从镜像列出），选择其一即可把代码回滚到该版本（同样保留 `data/` 数据库与本地配置，并重启服务）。当某次升级出现问题时，可用它快速回退到上一个稳定版。
 - **3 启动 / 4 关闭 / 5 重启**：兼容「`nohup` + `start.sh`」与「systemd 服务」两种运行方式；按监听端口反查进程，状态显示准确。
+
+### 国内镜像（Gitee / 自托管，可选）
+
+GitHub 的源码包实际存放在 `codeload.github.com`，该域名在国内经常被墙或超时，导致「升级 / 回滚」下载失败。控制台支持配置**镜像源**：下载与版本列表都优先走镜像。最省事的方案是用 **Gitee** 做镜像：
+
+1. 在 Gitee 新建仓库时选择「导入已有仓库」并粘贴 GitHub 地址，仓库**设为公开**，再把 `main` 分支与所有 `vX.Y.Z` 标签推送上去（`git push --tags`）。
+2. 国内服务器**一次性**引导新版控制台（Gitee 的 raw 文件国内通常可达）：
+   ```bash
+   cd /你的安装目录
+   curl -fsSL https://gitee.com/operations-go_0/site_analytics/raw/main/sa-console.sh -o sa-console.sh
+   chmod +x sa-console.sh
+   ```
+3. 把镜像地址写进安装目录的 `.update_mirror`（永久生效，一行一个 URL）：
+   ```bash
+   echo 'https://gitee.com/operations-go_0/site_analytics/repository/archive/{tag}.tar.gz' > /你的安装目录/.update_mirror
+   ```
+
+之后控制台的「升级 / 回滚」全自动走 Gitee，完全不依赖 GitHub。
+
+> 也可不写文件、临时用环境变量：`SA_UPDATE_MIRROR='https://gitee.com/operations-go_0/site_analytics/repository/archive/{tag}.tar.gz' sa-console update`。
+> 镜像地址支持 `{tag}` 占位符（自动替换为版本号）；目录型镜像则写成基址（控制台拼成 `<基址>/<tag>.tar.gz`，并额外读取 `<基址>/versions.json` 作为版本清单）。
 
 ### 单命令（便于脚本 / 监控调用）
 
@@ -317,7 +341,7 @@ sa-console start | stop | restart | status | update
 sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 ```
 
-> 版本管理基于 **GitHub Release**：先在 GitHub 上发布一个带 `vX.Y.Z` 标签的 Release，控制台才能检查 / 升级 / 回滚。当前版本号记录在 `app.py` 的 `VERSION` 常量中（发版时改此处即可，控制台会自动比对并提示升级）。
+> 版本管理基于 **GitHub Release（或等价的 Gitee 镜像）**：先在 GitHub 上发布一个带 `vX.Y.Z` 标签的 Release，控制台才能检查 / 升级 / 回滚；若配置了国内镜像源（`SA_UPDATE_MIRROR` 或安装目录下的 `.update_mirror`），则改从镜像读取版本列表与下载包。当前版本号记录在 `app.py` 的 `VERSION` 常量中（发版时改此处即可，控制台会自动比对并提示升级）。
 
 ---
 
