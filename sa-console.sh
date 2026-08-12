@@ -11,11 +11,16 @@
 #  版本管理：检查 / 升级 / 回滚均基于 GitHub Release（tarball）。
 #        升级与回滚都会保留 data/ 数据库与本地配置，仅覆盖代码文件。
 #  可选环境变量：SA_HOME  可强制指定安装目录（需含 app.py）。
+#  可选环境变量：SA_UPDATE_MIRROR  国内镜像源（解决 codeload.github.com 被墙问题）。
+#        取值可为「基址」如 https://mirror.example.com/sa  （控制台拼成 <基址>/<tag>.tar.gz），
+#        也可含 {tag} 占位符，如 https://gitee.com/u/r/repository/archive/{tag}.tar.gz。
+#        设置后：版本列表优先读 <基址>/versions.json，下载优先走镜像、失败再回退 github/codeload。
+#        也可把镜像地址写入安装目录下的 .update_mirror（一行一个 URL），持久生效。
 # ============================================================================
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.2"
+CONSOLE_VER="1.3.3"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -34,6 +39,11 @@ else
   exit 1
 fi
 cd "$INSTALL_DIR" || exit 1
+
+# 可选：国内镜像源（.update_mirror 文件持久化，覆盖 SA_UPDATE_MIRROR 环境变量）
+if [ -z "${SA_UPDATE_MIRROR:-}" ] && [ -f "$INSTALL_DIR/.update_mirror" ]; then
+  SA_UPDATE_MIRROR="$(head -1 "$INSTALL_DIR/.update_mirror" 2>/dev/null | tr -d '[:space:]')"
+fi
 
 # 脚本自身绝对路径（升级/回滚后用于重新执行磁盘上的新版本）
 SELF="$INSTALL_DIR/sa-console.sh"
@@ -199,6 +209,13 @@ latest_release_tag() {
 # 列出所有 Release tag（按 GitHub 返回顺序，通常最新在前）
 list_release_tags() {
   command -v curl >/dev/null 2>&1 || { echo ""; return; }
+  # 国内镜像优先：<基址>/versions.json -> {"latest":"vX","tags":["vX",...]}
+  if [ -n "${SA_UPDATE_MIRROR:-}" ]; then
+    local mj="${SA_UPDATE_MIRROR%/}/versions.json"
+    local mt
+    mt=$(curl -fsSL --max-time 20 "$mj" 2>/dev/null | grep -oE '"v[0-9][0-9.]*"' | tr -d '"' | sort -u)
+    if [ -n "$mt" ]; then echo "$mt"; return; fi
+  fi
   curl -s --max-time 10 -H "Accept: application/vnd.github+json" "$GH_API/releases?per_page=30" 2>/dev/null \
     | grep -oE '"tag_name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/'
 }
@@ -211,12 +228,12 @@ ver_ge() { [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sed 's/[^0-9.]//g' | sort 
 
 # 下载 tarball（带重试与真实错误输出），供升级/回滚复用。
 # 用法：download_tarball <url> <outfile> <errfile>  —— 返回 0 成功。
-# 国内访问 GitHub/codeload 经常偶发超时，故默认重试 3 次；并把 curl 真实
-# 错误写到 errfile，便于失败时排查（不再被 2>/dev/null 吞掉）。
+# 国内访问 GitHub/codeload 经常偶发超时，故单地址重试 2 次；多地址的兜底
+# 由 do_install_release 的候选列表负责。curl 真实错误写到 errfile。
 download_tarball() {
-  local url="$1" out="$2" err="$3" i tries=3
-  for i in 1 2 3; do
-    if curl -fsSL --max-time 120 -o "$out" "$url" 2>"$err"; then
+  local url="$1" out="$2" err="$3" i tries=2
+  for i in 1 2; do
+    if curl -fsSL --max-time 60 -o "$out" "$url" 2>"$err"; then
       return 0
     fi
     if [ "$i" -lt "$tries" ]; then
@@ -232,25 +249,29 @@ download_tarball() {
 do_install_release() {
   local tag="$1" label="$2"
   if ! command -v curl >/dev/null 2>&1; then echo "未找到 curl，无法下载。"; return 1; fi
-  local url; url="$(release_tarball "$tag")"
-  # 兜底地址：直接走 codeload（少一次 github.com 的 302 跳转，个别代理环境更稳）
-  local codeload_url="https://codeload.github.com/${GITHUB_REPO}/tar.gz/refs/tags/${tag}"
   local tmp; tmp=$(mktemp -d)
-  echo "正在从 GitHub 下载 $tag ..."
-  local ok=0
-  if download_tarball "$url" "$tmp/arc.tar.gz" "$tmp/curl.err"; then
-    ok=1
-  elif download_tarball "$codeload_url" "$tmp/arc.tar.gz" "$tmp/curl.err"; then
-    ok=1
+  # 候选下载地址（按顺序尝试）：国内镜像优先（若配置），其次 github，最后 codeload 直连兜底
+  local cand="" u
+  if [ -n "${SA_UPDATE_MIRROR:-}" ]; then
+    case "$SA_UPDATE_MIRROR" in
+      *'{tag}'*) cand="$cand ${SA_UPDATE_MIRROR/{tag\}/$tag}";;
+      *) cand="$cand ${SA_UPDATE_MIRROR%/}/$tag.tar.gz";;
+    esac
   fi
+  cand="$cand https://github.com/${GITHUB_REPO}/archive/refs/tags/$tag.tar.gz"
+  cand="$cand https://codeload.github.com/${GITHUB_REPO}/tar.gz/refs/tags/$tag"
+  echo "正在下载 $tag ..."
+  local ok=0 used=""
+  for u in $cand; do
+    if download_tarball "$u" "$tmp/arc.tar.gz" "$tmp/curl.err"; then ok=1; used="$u"; break; fi
+  done
   if [ "$ok" -ne 1 ]; then
     echo "下载失败，请检查网络或手动更新。"
-    if [ -s "$tmp/curl.err" ]; then
-      echo "curl 详细错误："; sed 's/^/  /' "$tmp/curl.err"
-    fi
-    echo "  下载地址：$url"
+    if [ -s "$tmp/curl.err" ]; then echo "curl 详细错误："; sed 's/^/  /' "$tmp/curl.err"; fi
+    echo "  已尝试地址：$cand"
     rm -rf "$tmp"; return 1
   fi
+  echo "已从以下源下载成功：$(basename "$used")"
   if [ ! -s "$tmp/arc.tar.gz" ]; then echo "下载内容为空，已中止。"; rm -rf "$tmp"; return 1; fi
   mkdir -p "$tmp/x"
   if ! tar -xzf "$tmp/arc.tar.gz" -C "$tmp/x" 2>/dev/null; then echo "解压失败。"; rm -rf "$tmp"; return 1; fi
