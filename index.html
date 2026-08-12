@@ -221,13 +221,13 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <div class="topbar">
     <div class="brand">
       <div class="logo"></div>
-      <div>网站流量统计<small>Client-side Analytics</small></div>
+      <div><span data-i18n="网站流量统计">网站流量统计</span><small>Client-side Analytics</small></div>
     </div>
     <div class="spacer"></div>
     <div class="ctrl">
-      <select id="selSite" onchange="onSiteChange()"><option value="">加载中…</option></select>
+      <select id="selSite" onchange="onSiteChange()"><option value="" data-i18n="加载中…">加载中…</option></select>
     </div>
-    <button class="btn ghost" onclick="openSiteManager()">+ 添加站点</button>
+    <button class="btn ghost" onclick="openSiteManager()" data-i18n="+ 添加站点">+ 添加站点</button>
     <div class="ctrl">
       <select id="selRange" onchange="onRangeChange()"></select>
       <span id="customRangePanel" class="custom-range" style="display:none">
@@ -237,21 +237,22 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
         <button class="btn" onclick="applyCustomRange()">应用</button>
       </span>
     </div>
+    <button class="btn ghost mini" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
     <button class="btn ghost" id="btnTheme" onclick="toggleTheme()">深色</button>
   </div>
 
   <div class="nav" id="nav">
     <div class="nav-left">
-      <button data-tab="overview" class="active" onclick="switchTab('overview')">概览</button>
-      <button data-tab="visitors" onclick="switchTab('visitors')">访客</button>
-      <button data-tab="content" onclick="switchTab('content')">内容</button>
-      <button data-tab="perf" onclick="switchTab('perf')">性能</button>
-      <button data-tab="sources" onclick="switchTab('sources')">来源</button>
-      <button data-tab="geo" onclick="switchTab('geo')">地域</button>
-      <button data-tab="realtime" onclick="switchTab('realtime')">实时监控</button>
+      <button data-tab="overview" class="active" onclick="switchTab('overview')" data-i18n="概览">概览</button>
+      <button data-tab="visitors" onclick="switchTab('visitors')" data-i18n="访客">访客</button>
+      <button data-tab="content" onclick="switchTab('content')" data-i18n="内容">内容</button>
+      <button data-tab="perf" onclick="switchTab('perf')" data-i18n="性能">性能</button>
+      <button data-tab="sources" onclick="switchTab('sources')" data-i18n="来源">来源</button>
+      <button data-tab="geo" onclick="switchTab('geo')" data-i18n="地域">地域</button>
+      <button data-tab="realtime" onclick="switchTab('realtime')" data-i18n="实时监控">实时监控</button>
     </div>
     <div class="nav-right">
-      <button class="btn ghost mini" id="btnRefresh" onclick="manualRefresh()" title="立即刷新">刷新</button>
+      <button class="btn ghost mini" id="btnRefresh" onclick="manualRefresh()" title="立即刷新" data-i18n="刷新">刷新</button>
       <span id="autoRefreshIndicator" class="refresh-indicator" title="自动刷新中（查看访客详情时会自动暂停）"></span>
     </div>
   </div>
@@ -262,49 +263,49 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <section id="tab-overview">
     <div id="anomalyBar" class="alert" style="display:none"></div>
     <div class="section">
-      <h2>访问分析摘要</h2>
+      <h2 data-i18n="访问分析摘要">访问分析摘要</h2>
       <div class="kpis" id="kpis"></div>
     </div>
     <div class="section grid2">
       <div class="card">
-        <div class="ct">访问趋势（浏览量 / 访客）</div>
+        <div class="ct" data-i18n="访问趋势（浏览量 / 访客）">访问趋势（浏览量 / 访客）</div>
         <div id="chartTrend" style="height:300px"></div>
       </div>
       <div class="card">
-        <div class="ct">访问深度分布（按访问页面数）</div>
+        <div class="ct" data-i18n="访问深度分布（按访问页面数）">访问深度分布（按访问页面数）</div>
         <div id="chartDepth" style="height:300px"></div>
       </div>
     </div>
     <div class="section grid3">
       <div class="card">
-        <div class="ct">站点 / 语言分布（同一主域下各子域，按独立访客）</div>
+        <div class="ct" data-i18n="站点 / 语言分布（同一主域下各子域，按独立访客）">站点 / 语言分布（同一主域下各子域，按独立访客）</div>
         <div id="chartSub" style="height:300px"></div>
       </div>
       <div class="card">
-        <div class="ct">新访客 vs 回访客（按区间首次到访）</div>
+        <div class="ct" data-i18n="新访客 vs 回访客（按区间首次到访）">新访客 vs 回访客（按区间首次到访）</div>
         <div id="chartNewReturn" style="height:300px"></div>
       </div>
       <div class="card">
-        <div class="ct">设备分布</div>
+        <div class="ct" data-i18n="设备分布">设备分布</div>
         <div id="chartDevice" style="height:300px"></div>
       </div>
     </div>
     <div class="section grid2">
       <div class="card">
-        <div class="ct">落地页 TOP（访客首屏页面）</div>
+        <div class="ct" data-i18n="落地页 TOP（访客首屏页面）">落地页 TOP（访客首屏页面）</div>
         <table id="tblLanding"></table>
       </div>
       <div class="card">
-        <div class="ct">退出页 TOP（访客末屏页面）</div>
+        <div class="ct" data-i18n="退出页 TOP（访客末屏页面）">退出页 TOP（访客末屏页面）</div>
         <table id="tblExit"></table>
       </div>
     </div>
     <div class="section card">
-      <div class="ct">页面平均停留时长 TOP（基于离开页上报时长）</div>
+      <div class="ct" data-i18n="页面平均停留时长 TOP（基于离开页上报时长）">页面平均停留时长 TOP（基于离开页上报时长）</div>
       <table id="tblDwell"></table>
     </div>
     <div class="section card">
-      <div class="ct">热门页面 TOP</div>
+      <div class="ct" data-i18n="热门页面 TOP">热门页面 TOP</div>
       <table id="tblPages"></table>
     </div>
   </section>
@@ -313,16 +314,16 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <section id="tab-visitors" style="display:none">
     <div class="section card inquiry-block" id="inquiryCard" onclick="toggleInquiryFilter()" title="点击仅查看潜在目标客户">
       <div class="inquiry-left">
-        <div class="inquiry-title"><span class="dot"></span>潜在目标客户</div>
-        <div class="inquiry-sub">访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户</div>
+        <div class="inquiry-title"><span class="dot"></span><span data-i18n="潜在目标客户">潜在目标客户</span></div>
+        <div class="inquiry-sub" data-i18n="访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户">访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户</div>
       </div>
       <div class="inquiry-right">
         <div class="inquiry-num" id="inquiryCount">0</div>
-        <div class="inquiry-unit">位</div>
+        <div class="inquiry-unit" data-i18n="位">位</div>
       </div>
     </div>
     <div class="section card">
-      <div class="ct" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">访客会话 <span class="pill" id="visitorCount"></span>
+      <div class="ct" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span data-i18n="访客会话">访客会话</span> <span class="pill" id="visitorCount"></span>
         <span id="suspectChip" class="filter-chip" style="display:none;background:rgba(224,96,58,.12);border-color:rgba(224,96,58,.4);color:#e0603a"></span>
         <span id="filterChip" class="filter-chip" style="display:none"></span>
         <span id="inquiryChip" class="inquiry-chip" style="display:none"></span>
@@ -335,11 +336,11 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <section id="tab-content" style="display:none">
     <div class="section grid2b">
       <div class="card">
-        <div class="ct">浏览器分布</div>
+        <div class="ct" data-i18n="浏览器分布">浏览器分布</div>
         <div id="chartUa" style="height:320px"></div>
       </div>
       <div class="card">
-        <div class="ct">设备分布</div>
+        <div class="ct" data-i18n="设备分布">设备分布</div>
         <div id="chartDevice2" style="height:320px"></div>
       </div>
     </div>
@@ -352,7 +353,7 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <!-- 页面性能 -->
   <section id="tab-perf" style="display:none">
     <div class="seg-bar">
-      <span class="seg-label">设备</span>
+      <span class="seg-label" data-i18n="设备">设备</span>
       <div class="seg" id="perfDevSeg"></div>
     </div>
     <div class="section card">
@@ -362,7 +363,7 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
     <div class="section card">
       <div class="ct">各页面性能（按采样数）</div>
       <table id="tblPerf" class="pages-table"></table>
-      <div class="note">指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。</div>
+      <div class="note" data-i18n="指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。">指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。</div>
     </div>
   </section>
 
@@ -370,13 +371,13 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <section id="tab-sources" style="display:none">
     <div class="section grid2b">
       <div class="card">
-        <div class="ct">来源类型分布</div>
+        <div class="ct" data-i18n="来源类型分布">来源类型分布</div>
         <div id="chartRef" style="height:340px"></div>
       </div>
       <div class="card">
-        <div class="ct">来源类型明细（按独立访客）</div>
+        <div class="ct" data-i18n="来源类型明细（按独立访客）">来源类型明细（按独立访客）</div>
         <table id="tblRefCat"></table>
-        <div class="note">说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。</div>
+        <div class="note" data-i18n="说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。">说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。</div>
       </div>
     </div>
     <div class="section card">
@@ -389,17 +390,17 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
   <!-- 地域 -->
   <section id="tab-geo" style="display:none">
     <div class="section card">
-      <div class="ct">世界地图 · 独立访客热力分布</div>
+      <div class="ct" data-i18n="世界地图 · 独立访客热力分布">世界地图 · 独立访客热力分布</div>
       <div id="chartMap" style="height:460px"></div>
       <div class="note" id="geoMapNote"></div>
     </div>
     <div class="section grid2">
       <div class="card">
-        <div class="ct">国家 / 地区排行（按独立访客）</div>
+        <div class="ct" data-i18n="国家 / 地区排行（按独立访客）">国家 / 地区排行（按独立访客）</div>
         <table id="tblCountries"></table>
       </div>
       <div class="card">
-        <div class="ct">国家 → 城市明细</div>
+        <div class="ct" data-i18n="国家 → 城市明细">国家 → 城市明细</div>
         <div id="geoTree"></div>
       </div>
     </div>
@@ -412,18 +413,18 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
     </div>
     <div class="section card">
       <div class="ct" style="display:flex;align-items:center;gap:12px;justify-content:space-between">
-        <div><span class="live-dot"></span>实时访客流 <span class="pill" id="liveWindowLabel">近10分钟</span></div>
+        <div><span class="live-dot"></span><span data-i18n="实时访客流">实时访客流</span> <span class="pill" id="liveWindowLabel">近10分钟</span></div>
         <div class="ctrl" style="display:flex;align-items:center;gap:8px">
-          <span style="color:var(--muted);font-size:12px">时间窗口</span>
+          <span style="color:var(--muted);font-size:12px" data-i18n="时间窗口">时间窗口</span>
           <select id="selWindow" onchange="onWindowChange()" style="padding:5px 9px;font-size:12px">
-            <option value="5">近5分钟</option>
-            <option value="10" selected>近10分钟</option>
-            <option value="30">近30分钟</option>
+            <option value="5" data-i18n="近5分钟">近5分钟</option>
+            <option value="10" selected data-i18n="近10分钟">近10分钟</option>
+            <option value="30" data-i18n="近30分钟">近30分钟</option>
           </select>
         </div>
       </div>
       <table id="tblLive"></table>
-      <div class="note">仅展示所选窗口内的事件，并按时间倒序（最新在最前）。数据由访客浏览器实时上报。</div>
+      <div class="note" data-i18n="仅展示所选窗口内的事件，并按时间倒序（最新在最前）。数据由访客浏览器实时上报。">仅展示所选窗口内的事件，并按时间倒序（最新在最前）。数据由访客浏览器实时上报。</div>
     </div>
   </section>
 </div>
@@ -432,37 +433,37 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
 <div id="siteModal" class="modal" style="display:none">
   <div class="modal-box">
     <div class="modal-head">
-      <span>站点管理</span>
+      <span data-i18n="站点管理">站点管理</span>
       <button class="x" onclick="closeSiteManager()">×</button>
     </div>
     <div class="modal-body">
       <div class="deploy-code">
         <div class="dc-title">① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 <code>&lt;/head&gt;</code> 前）</div>
-        <div class="dc-note">一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。</div>
+        <div class="dc-note" data-i18n="一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。">一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。</div>
         <div class="code-box"><pre id="deployCode"></pre><button class="mini" onclick="copyText('deployCode')">复制</button></div>
       </div>
       <div class="add-row">
-        <input id="newSite" placeholder="要监控的域名，如 example.com（可选）">
-        <input id="newLabel" placeholder="备注名（可选）">
-        <button class="btn" onclick="addSite()">添加站点</button>
+        <input id="newSite" data-i18n-attr="placeholder:要监控的域名，如 example.com（可选）" placeholder="要监控的域名，如 example.com（可选）">
+        <input id="newLabel" data-i18n-attr="placeholder:备注名（可选）" placeholder="备注名（可选）">
+        <button class="btn" onclick="addSite()" data-i18n="添加站点">添加站点</button>
       </div>
-      <div class="note">部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。</div>
+      <div class="note" data-i18n="部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。">部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。</div>
       <div id="siteList"></div>
       <div class="retention-box">
-        <div class="dc-title">② 数据保留策略</div>
-        <div class="dc-note">系统会按保留期自动清理超过期限的原始访问事件（启动与运行时执行），以控制数据库体积。默认保留 720 天。</div>
+        <div class="dc-title" data-i18n="② 数据保留策略">② 数据保留策略</div>
+        <div class="dc-note" data-i18n="系统会按保留期自动清理超过期限的原始访问事件（启动与运行时执行），以控制数据库体积。默认保留 720 天。">系统会按保留期自动清理超过期限的原始访问事件（启动与运行时执行），以控制数据库体积。默认保留 720 天。</div>
         <div class="retention-row">
           <input id="retentionDays" type="number" min="30" step="30" placeholder="720">
-          <span style="color:var(--muted);font-size:12px">天</span>
-          <button class="mini" onclick="saveRetention()">保存保留期</button>
-          <button class="mini danger" onclick="cleanupNow()">立即清理过期数据</button>
+          <span style="color:var(--muted);font-size:12px" data-i18n="天">天</span>
+          <button class="mini" onclick="saveRetention()" data-i18n="保存保留期">保存保留期</button>
+          <button class="mini danger" onclick="cleanupNow()" data-i18n="立即清理过期数据">立即清理过期数据</button>
           <span id="retentionResult" style="color:var(--muted);font-size:12px"></span>
         </div>
       </div>
       <div class="retention-box">
-        <div class="dc-title">③ 已屏蔽访客（机房 / 数据中心流量自动排除）</div>
-        <div class="dc-note">系统会自动排除机房 / 数据中心网络（云主机、托管、CDN 等）的访客，不计入任何统计；其原始数据被保留、可恢复。需要查看或恢复误判时，展开下方列表即可。</div>
-        <div class="blocked-toggle" id="blockedToggle" onclick="toggleBlocked()"><span id="blockedArrow">▸</span> <span id="blockedLabel">展开已屏蔽访客</span>（<span id="blockedCount">0</span>）</div>
+        <div class="dc-title" data-i18n="③ 已屏蔽访客（机房 / 数据中心流量自动排除）">③ 已屏蔽访客（机房 / 数据中心流量自动排除）</div>
+        <div class="dc-note" data-i18n="系统会自动排除机房 / 数据中心网络（云主机、托管、CDN 等）的访客，不计入任何统计；其原始数据被保留、可恢复。需要查看或恢复误判时，展开下方列表即可。">系统会自动排除机房 / 数据中心网络（云主机、托管、CDN 等）的访客，不计入任何统计；其原始数据被保留、可恢复。需要查看或恢复误判时，展开下方列表即可。</div>
+        <div class="blocked-toggle" id="blockedToggle" onclick="toggleBlocked()"><span id="blockedArrow">▸</span> <span id="blockedLabel" data-i18n="展开已屏蔽访客">展开已屏蔽访客</span>（<span id="blockedCount">0</span>）</div>
         <div id="blockedList" class="blocked-list" style="display:none"></div>
       </div>
     </div>
@@ -470,12 +471,177 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
 </div>
 
 <script>
+var SA_LANG = (function(){ var l = localStorage.getItem('sa_lang'); return (l==='en'||l==='zh') ? l : 'zh'; })();
+var I18N_EN = {
+'网站流量统计':'Website Analytics',
+'概览':'Overview','访客':'Visitors','内容':'Content','性能':'Performance','来源':'Sources','地域':'Geo','实时监控':'Realtime',
+'刷新':'Refresh','深色':'Dark','浅色':'Light',
+'+ 添加站点':'+ Add Site','应用':'Apply','至':'to',
+'保存保留期':'Save Retention','立即清理过期数据':'Clean Expired Now',
+'复制':'Copy','添加站点':'Add Site',
+'展开已屏蔽访客':'Show blocked visitors','收起已屏蔽访客':'Hide blocked visitors','恢复':'Restore',
+'加载中…':'Loading…',
+'访问分析摘要':'Traffic Summary',
+'访问趋势（浏览量 / 访客）':'Visits Trend (Pageviews / Visitors)',
+'访问深度分布（按访问页面数）':'Visit Depth (by pages per visit)',
+'站点 / 语言分布（同一主域下各子域，按独立访客）':'Site / Language Distribution',
+'新访客 vs 回访客（按区间首次到访）':'New vs Returning (first-seen in period)',
+'设备分布':'Device Distribution',
+'落地页 TOP（访客首屏页面）':'Top Landing Pages',
+'退出页 TOP（访客末屏页面）':'Top Exit Pages',
+'页面平均停留时长 TOP（基于离开页上报时长）':'Top Avg. Dwell Time',
+'热门页面 TOP':'Top Pages',
+'潜在目标客户':'Potential Leads',
+'访客会话':'Visitor Sessions',
+'浏览器分布':'Browser Distribution',
+'全部热门页面（按访问量）':'All Top Pages (by views)',
+'页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）':'Core Web Vitals (p75, from real visitors)',
+'各页面性能（按采样数）':'Per-page Performance (by samples)',
+'来源类型分布':'Source Type Distribution',
+'来源类型明细（按独立访客）':'Source Types Detail (by unique visitors)',
+'具体来源域名 TOP（按独立访客）':'Top Referrer Domains',
+'世界地图 · 独立访客热力分布':'World Map · Unique Visitor Heatmap',
+'国家 / 地区排行（按独立访客）':'Top Countries / Regions',
+'国家 → 城市明细':'Country → City Detail',
+'实时访客流':'Realtime Visitors',
+'时间窗口':'Time Window',
+'站点管理':'Site Management',
+'① 复制下面这段通用代码，粘贴到你的网站（如 WP 主题 header 的 </head> 前）':'① Copy this snippet into your site (e.g. before </head> in your WP theme header)',
+'一段代码即可监控所有语言域名（www / de / fr 等），自动按访问域名区分，无需为每个域名单独部署；并会自动绕过缓存插件本地化，不必逐个站点配 exclude。域名已自动生成为当前看板地址，无需手动替换。':'One snippet monitors all language domains (www / de / fr etc.), auto-separated by visited domain—no per-domain deployment; it also bypasses cache-plugin localization automatically. The domain is auto-filled from the current dashboard URL.',
+'要监控的域名，如 example.com（可选）':'Domain to monitor, e.g. example.com (optional)',
+'备注名（可选）':'Label (optional)',
+'部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。':'After deploying the code above, each domain auto-appears in the site list and dropdown. You can delete unneeded sites (with all their data) here.',
+'② 数据保留策略':'② Data Retention Policy',
+'系统会按保留期自动清理超过期限的原始访问事件（启动与运行时执行），以控制数据库体积。默认保留 720 天。':'The system auto-purges raw visit events older than the retention period (on startup and runtime) to control DB size. Default: 720 days.',
+'天':'days',
+'③ 已屏蔽访客（机房 / 数据中心流量自动排除）':'③ Blocked Visitors (datacenter / hosting traffic auto-excluded)',
+'系统会自动排除机房 / 数据中心网络（云主机、托管、CDN 等）的访客，不计入任何统计；其原始数据被保留、可恢复。需要查看或恢复误判时，展开下方列表即可。':'The system auto-excludes visitors from datacenter / hosting networks (cloud, hosting, CDN, etc.) from all stats; their raw data is kept and recoverable. Expand the list below to review or restore false positives.',
+'正在获取站点列表…':'Loading site list…',
+'面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。':'Panel token invalid: append ?token=YOUR_TOKEN to the URL, or remove --token when starting app.py.',
+'暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。':'No site data yet. Embed the tracker.js snippet on your pages; data refreshes once real visits occur.',
+'获取站点失败：':'Failed to load sites: ',
+'今天':'Today','昨天':'Yesterday','2天之前':'2 days ago','过去7天':'Last 7 days','过去14天':'Last 14 days','过去28天':'Last 28 days','过去60天':'Last 60 days','过去90天':'Last 90 days','自定义日期范围':'Custom range',
+'{y}-{m}':'{y}-{m}',
+'请选择开始和结束日期':'Please select start and end date',
+'正在加载统计数据…':'Loading stats…',
+'统计失败：':'Stats failed: ',
+'加载失败：':'Load failed: ',
+'已暂停':'Paused','自动刷新':'Auto-refresh','自动刷新中（查看访客详情时会自动暂停）':'Auto-refreshing (pauses when viewing visitor details)','自动刷新已暂停（关闭访客详情/弹窗后恢复）':'Auto-refresh paused (resumes after closing details/modal)',
+'刷新中…':'Refreshing…',
+'独立访客':'Unique Visitors','独立访客: ':'Unique Visitors: ','浏览量（PV）':'Pageviews (PV)','人均页面数':'Pages / Visit','平均停留':'Avg. Duration','跳出率':'Bounce Rate','当前在线':'Online Now',
+'浏览量':'Pageviews','访客':'Visitors','浏览量(上期)':'Pageviews (prev)','访客(上期)':'Visitors (prev)',
+'暂无子域数据':'No subdomain data','暂无数据':'No data',
+'暂无访客数据':'No visitor data',
+'落地页':'Landing','退出页':'Exit',
+'次数':'Count',
+'页面 URL':'Page URL','平均停留':'Avg. Dwell','访问次数':'Views',
+'当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）':'No performance samples this period (requires real visitor browsers to report metrics)',
+'FCP':'FCP','LCP':'LCP','TTFB':'TTFB','CLS':'CLS','Speed Index':'Speed Index',
+'采样':'Samples',
+'全部':'All','桌面':'Desktop','手机':'Mobile','平板':'Tablet',
+'设备':'Device','状态':'Status',
+'直接访问':'Direct',
+'访客':'Visitor','来路':'Source','设备 / 浏览器':'Device / Browser','运营商':'ISP','地区':'Region','页面':'Pages','停留':'Duration','最近活跃':'Last Active',
+'疑似数据采集':'Suspected data collection','疑似爬虫/抓取':'Suspected crawler/scraper','浏览量畸高':'High pageviews',
+'数据中心/云主机网络，疑似数据采集/抓取':'Datacenter/cloud network, suspected data collection/scraping',
+'数据中心/云主机网络且浏览量畸高，疑似数据采集/抓取':'Datacenter/cloud network with abnormally high pageviews, suspected data collection/scraping',
+'单访客浏览量畸高，疑似爬虫':'Single visitor with abnormally high pageviews, suspected crawler',
+'访问页面（{n} 个不同页面 · 共 {m} 次动作）':'Visited pages ({n} distinct · {m} actions)',
+'路径':'Path','最后访问':'Last visit',
+'日期':'Date','新访客':'New','回访客':'Returning','来源类型':'Source Type','来源域名':'Referrer Domain','访问量':'Pageviews',
+'暂无被屏蔽的访客。':'No blocked visitors.',
+'恢复失败：':'Restore failed: ','未知错误':'Unknown error','请求失败，请重试':'Request failed, please retry',
+'该窗口内暂无访问记录':'No visits in this window',
+'时间':'Time','站点':'Site','PV / 页':'PV / Page',
+'近 {n} 分钟 PV':'Last {n} min PV','近 {n} 分钟':'Last {n} min','监听中':'Monitoring','实时':'Live',
+'未配置 GeoIP 数据库':'GeoIP database not configured',
+'提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。':'Hint: download GeoLite2-City.mmdb into geoip/ and restart app.py.',
+'所选周期内暂无地域数据':'No geo data in selected period',
+'暂无地域数据':'No geo data',
+'高':'High','低':'Low',
+'提示：GeoIP 已启用，只有加载 GeoIP 之后新产生的访问才会显示地域。':'Hint: GeoIP is enabled; only visits after GeoIP load show regions.',
+'颜色越深表示该国家/地区的独立访客越多。仅展示所选周期内有访问的国家。':'Darker = more unique visitors. Only countries with visits in the period are shown.',
+'国家 / 地区':'Country / Region','占比':'Share',
+'城市数':'Cities',
+'下的城市':"'s cities",
+'来源筛选：':'Source filter: ','清除筛选':'Clear filter','仅看：':'Showing: ',
+'保留天数至少为 30 天':'Retention must be at least 30 days',
+'已保存：保留 {n} 天':'Saved: retention {n} days',
+'已保存数据保留期为 {n} 天。':'Saved data retention to {n} days.',
+'保存失败':'Save failed','保存失败：':'Save failed: ','清理失败：':'Cleanup failed: ',
+'已清理 {n} 条过期事件':'Cleaned {n} expired events',
+'清理失败':'Cleanup failed',
+'还没有手动添加的站点。添加后会自动生成埋点代码，复制嵌入目标网站即可开始统计。':'No manually added sites yet. After adding, the tracking snippet is generated—copy and embed it to start.',
+'上移':'Move up','下移':'Move down',
+'拖动排序':'Drag to reorder','删除':'Delete','保存排序失败：':'Failed to save order: ',
+'请输入要监控的域名':'Please enter the domain to monitor',
+'添加失败：':'Add failed: ',
+'已添加 {n}，请在弹窗中复制埋点代码嵌入目标网站。':'Added {n}. Copy the tracking snippet from the dialog and embed it.',
+'确定删除站点「{n}」及其全部访问数据？\n此操作不可恢复。':'Delete site "{n}" and ALL its visit data? This cannot be undone.',
+'已删除站点 {n}（含全部访问数据）。':'Deleted site {n} (with all visit data).',
+'删除失败：':'Delete failed: ',
+'位':'',
+'访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户':'Visitors whose URL contains a product page (/product, /products, etc.) or contact page and their multilingual variants (FR/DE/IT/NL/ES/JA/KO) are treated as potential leads',
+'指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。':'Metrics (aligned with PageSpeed Insights field data): FCP, LCP, TTFB, CLS, Speed Index, all in seconds (CLS dimensionless). Top cards use the 75th percentile (p75, consistent with PSI), more robust to outliers than the mean; the table shows per-page means. Color thresholds: green=good / yellow=needs improvement / red=poor. Speed Index is a browser-estimated visual-completeness value (not Lighthouse frame-by-frame), for trend reference only. Aggregation filters outliers > 60s and CLS > 2. Auto-refresh every 60s; pauses when expanding visitor details or opening a modal; click "Refresh" (top-right) to refresh manually.',
+'说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。':'Note: each visitor is attributed to their landing source (first Referrer in the window) as the unique owner, so the sum of per-source unique visitors equals the overview total, with no double counting.',
+'仅展示所选窗口内的事件，并按时间倒序（最新在最前）。数据由访客浏览器实时上报。':'Shows only events within the selected window, sorted newest-first. Data is reported in real time by visitor browsers.',
+'未获取到站点':'No sites retrieved',
+'预设':'Presets',
+'流量异常：当前区间浏览量':'Traffic anomaly: pageviews ',
+' 较上一等长区间':' vs previous equal-length period ',
+' 增长约':' up ~',
+'%，可能为推广活动或异常爬虫，建议核查。':'% — possibly a campaign or bot surge; please verify.',
+' 下降约':' down ~',
+'%，请关注站点可用性与收录情况。':'% — check site availability and indexing.',
+' 个疑似异常':' suspicious',
+' 个疑似数据采集':' datacenter/collection',
+' 个浏览量畸高':' high-pageview',
+'手动屏蔽':'manually blocked',
+'清除筛选':'clear',
+'来源筛选：':'Source filter: ',
+'仅看：':'Showing: ',
+'近5分钟':'Last 5 min'
+};
+function t(k, sub){
+  var s = (SA_LANG==='en' && I18N_EN[k]!=null) ? I18N_EN[k] : k;
+  if(sub!=null){
+    if(typeof sub === 'object'){
+      for(var p in sub){ if(Object.prototype.hasOwnProperty.call(sub,p)){ s = s.split('{'+p+'}').join(String(sub[p])); } }
+    } else {
+      s = s.split('{n}').join(String(sub));
+    }
+  }
+  return s;
+}
+function applyI18n(){
+  document.title = t('网站流量统计');
+  var nodes = document.querySelectorAll('[data-i18n]');
+  for(var i=0;i<nodes.length;i++){ nodes[i].textContent = t(nodes[i].getAttribute('data-i18n')); }
+  var attrs = document.querySelectorAll('[data-i18n-attr]');
+  for(var j=0;j<attrs.length;j++){
+    var el = attrs[j];
+    var spec = el.getAttribute('data-i18n-attr').split(';');
+    for(var s=0;s<spec.length;s++){
+      var kv = spec[s].split(':');
+      if(kv.length===2){ el.setAttribute(kv[0].trim(), t(kv[1].trim())); }
+    }
+  }
+  var tb = document.getElementById('langToggle');
+  if(tb) tb.textContent = (SA_LANG==='en') ? '中' : 'EN';
+}
+function switchLang(lang){
+  SA_LANG = (lang==='en') ? 'en' : 'zh';
+  localStorage.setItem('sa_lang', SA_LANG);
+  applyI18n();
+  if(currentSite){ loadData(); } else { initRangeSelector(); }
+  applyThemeAttr();
+}
 var ECHARTS_OK = (typeof echarts !== 'undefined');
 var currentTheme = (localStorage.getItem('sa_theme') || 'light');
 function applyThemeAttr(){
   document.documentElement.setAttribute('data-theme', currentTheme);
   var bt = document.getElementById('btnTheme');
-  if(bt) bt.textContent = currentTheme==='dark' ? '深色' : '浅色';
+  if(bt) bt.textContent = currentTheme==='dark' ? t('深色') : t('浅色');
 }
 function toggleTheme(){
   currentTheme = (currentTheme==='dark') ? 'light' : 'dark';
@@ -700,7 +866,7 @@ function pieLabelColor(){
   return currentTheme==='light' ? '#4a5563' : '#e6edf3';
 }
 function loadSites(){
-  setTip('正在获取站点列表…');
+  setTip(t('正在获取站点列表…'));
   fetch(apiUrl('/api/sites'))
     .then(function(r){ return r.json(); })
     .then(function(res){
@@ -714,31 +880,31 @@ function loadSites(){
           setTip('');
           loadData();
         } else {
-          var msg = res.error || res.msg || '未获取到站点';
+          var msg = res.error || res.msg || t('未获取到站点');
           if(msg==='token 错误'){
-            setTip('面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。', true);
+            setTip(t('面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。'), true);
           } else {
-            setTip('暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。');
+            setTip(t('暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。'));
           }
         }
       });
     })
-    .catch(function(e){ setTip('获取站点失败：'+e); });
+    .catch(function(e){ setTip(t('获取站点失败：')+e); });
 }
 
 function presetOptions(){
   var presets = [
-    {label:'今天', value:'today'},
-    {label:'昨天', value:'yesterday'},
-    {label:'2天之前', value:'2days'},
-    {label:'过去7天', value:'7days'},
-    {label:'过去14天', value:'14days'},
-    {label:'过去28天', value:'28days'},
-    {label:'过去60天', value:'60days'},
-    {label:'过去90天', value:'90days'},
-    {label:'自定义日期范围', value:'custom'}
+    {label:t('今天'), value:'today'},
+    {label:t('昨天'), value:'yesterday'},
+    {label:t('2天之前'), value:'2days'},
+    {label:t('过去7天'), value:'7days'},
+    {label:t('过去14天'), value:'14days'},
+    {label:t('过去28天'), value:'28days'},
+    {label:t('过去60天'), value:'60days'},
+    {label:t('过去90天'), value:'90days'},
+    {label:t('自定义日期范围'), value:'custom'}
   ];
-  var opts = '<optgroup label="预设">';
+  var opts = '<optgroup label="'+t('预设')+'">';
   for(var i=0;i<presets.length;i++){
     var p = presets[i];
     var sel = p.value === currentRange ? ' selected' : '';
@@ -762,7 +928,7 @@ function initRangeSelector(){
           for(var j=0;j<months.length;j++){
             var ym = months[j];
             var parts = ym.split('-');
-            var label = parts[0]+'年'+parseInt(parts[1],10)+'月';
+            var label = t('{y}-{m}', {y:parts[0], m:parseInt(parts[1],10)});
             var val = 'month:'+ym;
             mopts += '<option value="'+val+'"'+(val===currentRange?' selected':'')+'>'+label+'</option>';
           }
@@ -848,7 +1014,7 @@ function syncCustomRange(){
 
 function applyCustomRange(){
   var r = parseCustomRange();
-  if(!r){ setTip('请选择开始和结束日期', true); return; }
+  if(!r){ setTip(t('请选择开始和结束日期'), true); return; }
   customRangeStart = r.start; customRangeEnd = r.end;
   currentRange = r.value;
   showCustomRangePanel(true);
@@ -861,12 +1027,12 @@ function getRangeParams(){
 
 function loadData(only){
   if(!currentSite){ return; }
-  setTip('正在加载统计数据…');
+  setTip(t('正在加载统计数据…'));
   fetch(apiUrl('/api/stats?site='+encodeURIComponent(currentSite)+getRangeParams()))
     .then(function(r){ return r.json(); })
     .then(function(res){
       safeCall(function(){
-        if(!res.status){ setTip('统计失败：'+(res.msg||res.error||'未知错误'), true); return; }
+        if(!res.status){ setTip(t('统计失败：')+(res.msg||res.error||t('未知错误')), true); return; }
         setTip('');
         window.__lastStats = res.data;
         if(only){
@@ -886,7 +1052,7 @@ function loadData(only){
         if(currentTab==='realtime') loadRecent(true);
       });
     })
-    .catch(function(e){ setTip('加载失败：'+e); });
+    .catch(function(e){ setTip(t('加载失败：')+e); });
 }
 
 function updateRefreshIndicator(){
@@ -894,12 +1060,12 @@ function updateRefreshIndicator(){
   if(!el) return;
   if(autoRefreshPaused){
     el.classList.add('paused');
-    el.textContent='已暂停';
-    el.title='自动刷新已暂停（关闭访客详情/弹窗后恢复）';
+    el.textContent=t('已暂停');
+    el.title=t('自动刷新已暂停（关闭访客详情/弹窗后恢复）');
   } else {
     el.classList.remove('paused');
-    el.textContent='自动刷新';
-    el.title='自动刷新中（查看访客详情时会自动暂停）';
+    el.textContent=t('自动刷新');
+    el.title=t('自动刷新中（查看访客详情时会自动暂停）');
   }
 }
 function setAutoRefreshPaused(paused){
@@ -910,8 +1076,8 @@ function manualRefresh(){
   var now = Date.now();
   if(now - lastRefreshAt < 2000){ return; } // 2 秒内防连点
   lastRefreshAt = now;
-  var btn=document.getElementById('btnRefresh'); if(btn){ btn.textContent='刷新中…'; }
-  function done(){ if(btn){ btn.textContent='刷新'; } }
+  var btn=document.getElementById('btnRefresh'); if(btn){ btn.textContent=t('刷新中…'); }
+  function done(){ if(btn){ btn.textContent=t('刷新'); } }
   if(currentTab==='realtime'){ loadRecent(true); done(); }
   else if(currentTab==='visitors'){ loadVisitors(); done(); }
   else { loadData(currentTab); done(); }
@@ -932,12 +1098,12 @@ function renderOverview(d){
   var perPV = d.total_uv>0 ? (d.total_pv/d.total_uv) : 0;
   var prevPpv = prev.uv>0 ? (prev.pv/prev.uv) : 0;
   var kpis=[
-    {label:'独立访客',val:fmtNum(d.total_uv),chg:chgPct(d.total_uv, prev.uv, true), sub:prevTip(prev.uv)},
-    {label:'浏览量（PV）',val:fmtNum(d.total_pv),chg:chgPct(d.total_pv, prev.pv, true), sub:prevTip(prev.pv)},
-    {label:'人均页面数',val:perPV.toFixed(2),chg:chgPct(perPV, prevPpv, true), sub:prevTip(prevPpv)},
-    {label:'平均停留',val:fmtDuration(d.avg_duration),chg:chgPct(d.avg_duration, prev.avg_duration, true), sub:prevTip(prev.avg_duration)},
-    {label:'跳出率',val:d.bounce+'%',chg:chgPct(d.bounce, prev.bounce, false), sub:prevTip(prev.bounce)},
-    {label:'当前在线',val:fmtNum(d.online||0),chg:{v:'近5分钟',dir:'flat'}},
+    {label:t('独立访客'),val:fmtNum(d.total_uv),chg:chgPct(d.total_uv, prev.uv, true), sub:prevTip(prev.uv)},
+    {label:t('浏览量（PV）'),val:fmtNum(d.total_pv),chg:chgPct(d.total_pv, prev.pv, true), sub:prevTip(prev.pv)},
+    {label:t('人均页面数'),val:perPV.toFixed(2),chg:chgPct(perPV, prevPpv, true), sub:prevTip(prevPpv)},
+    {label:t('平均停留'),val:fmtDuration(d.avg_duration),chg:chgPct(d.avg_duration, prev.avg_duration, true), sub:prevTip(prev.avg_duration)},
+    {label:t('跳出率'),val:d.bounce+'%',chg:chgPct(d.bounce, prev.bounce, false), sub:prevTip(prev.bounce)},
+    {label:t('当前在线'),val:fmtNum(d.online||0),chg:{v:t('近5分钟'),dir:'flat'}},
   ];
   var html='';
   for(var i=0;i<kpis.length;i++){
@@ -954,10 +1120,10 @@ function renderOverview(d){
   var c1=initChart('chartTrend'); applyChartTheme(c1);
   if(c1){
     var xData = daily.map(function(x){ return isHourly ? x.label : x.date.substring(5); });
-    var xLabel = isHourly ? '时间' : '日期';
+    var xLabel = isHourly ? t('时间') : t('日期');
     c1.setOption({
       tooltip:{trigger:'axis'},
-      legend:{data:['浏览量','访客','浏览量(上期)','访客(上期)'],textStyle:{color:'#8b98a9'},top:0},
+      legend:{data:[t('浏览量'),t('访客'),t('浏览量(上期)'),t('访客(上期)')],textStyle:{color:'#8b98a9'},top:0},
       xAxis:{type:'category',data:xData,name:xLabel,nameTextStyle:{color:'#5b6675'},axisLine:{lineStyle:{color:'#2c3543'}},axisLabel:{color:'#8b98a9',fontSize:11,rotate:isHourly?35:0}},
       yAxis:{type:'value',splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
       series:[
@@ -984,7 +1150,7 @@ function renderOverview(d){
     var subs = d.subdomains || [];
     if(!subs.length){
       c3.clear();
-      c3.setOption({title:{text:'暂无子域数据',left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      c3.setOption({title:{text:t('暂无子域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
     } else {
       c3.setOption({
         tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
@@ -999,8 +1165,8 @@ function renderOverview(d){
   var cNR=initChart('chartNewReturn'); applyChartTheme(cNR);
   if(cNR){
     var nr=d.new_returning||{new:0,returning:0};
-    var nrData=[{name:'新访客',value:nr.new||0},{name:'回访客',value:nr.returning||0}];
-    if((nr.new||0)+(nr.returning||0)===0){ cNR.clear(); cNR.setOption({title:{text:'暂无数据',left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}); }
+    var nrData=[{name:t('新访客'),value:nr.new||0},{name:t('回访客'),value:nr.returning||0}];
+    if((nr.new||0)+(nr.returning||0)===0){ cNR.clear(); cNR.setOption({title:{text:t('暂无数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}); }
     else cNR.setOption({tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
       series:[{type:'pie',radius:['45%','72%'],data:nrData,label:{color:pieLabelColor(),fontSize:12,formatter:'{b}\n{d}%'},itemStyle:pieBorder()}]});
   }
@@ -1015,8 +1181,8 @@ function renderOverview(d){
       yAxis:{type:'value',axisLabel:{color:'#8b98a9'},splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
       series:[{type:'bar',data:dv,itemStyle:{color:'#1f9cf0'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]});
   }
-  renderRankTable('tblLanding', (d.landing_pages||[]).slice(0,10), '落地页', function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
-  renderRankTable('tblExit', (d.exit_pages||[]).slice(0,10), '退出页', function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
+  renderRankTable('tblLanding', (d.landing_pages||[]).slice(0,10), t('落地页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
+  renderRankTable('tblExit', (d.exit_pages||[]).slice(0,10), t('退出页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
   renderDwellTable(d.page_dwell||[]);
   renderAnomaly(d);
 
@@ -1025,9 +1191,9 @@ function renderOverview(d){
 
 function renderRankTable(id, rows, label, fmt, withBar, nameRenderer, valueLabel){
   var el=document.getElementById(id);
-  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">暂无数据</td></tr>'; return; }
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
   var max=rows[0].value;
-  var vlabel = (typeof valueLabel === 'string' && valueLabel) ? valueLabel : '次数';
+  var vlabel = (typeof valueLabel === 'string' && valueLabel) ? valueLabel : t('次数');
   var h='<thead><tr><th class="rank">#</th><th>'+label+'</th><th class="right">'+vlabel+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
@@ -1042,9 +1208,9 @@ function renderRankTable(id, rows, label, fmt, withBar, nameRenderer, valueLabel
 function renderDwellTable(rows){
   var el=document.getElementById('tblDwell');
   if(!el) return;
-  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">暂无数据</td></tr>'; return; }
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
   var max=Math.max.apply(null, rows.map(function(r){return r.views;}));
-  var h='<thead><tr><th class="col-idx">#</th><th>页面 URL</th><th class="right">平均停留</th><th class="col-bar">访问次数</th></tr></thead><tbody>';
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('平均停留')+'</th><th class="col-bar">'+t('访问次数')+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i], pct=max?Math.round(r.views/max*100):0;
     h+='<tr><td class="col-idx">'+(i+1)+'</td><td class="cell-path">'+pageLink(r.site || currentSite,r.path)+'</td>'+
@@ -1058,7 +1224,7 @@ function renderPerfSummary(d){
   var el=document.getElementById('perfSummary'); if(!el) return;
   var o=d||{};
   if(!o.perf_count || o.perf_count <= 0){
-    el.innerHTML='<div class="empty">当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）</div>'; return;
+    el.innerHTML='<div class="empty">'+t('当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）')+'</div>'; return;
   }
   function cell(label,val,unit,good,poor){
     var rating = val<=good ? 'good' : (val<=poor ? 'mid' : 'poor');
@@ -1078,8 +1244,8 @@ function renderPerfSummary(d){
 
 function renderPerfTable(rows){
   var el=document.getElementById('tblPerf'); if(!el) return;
-  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">暂无数据</td></tr>'; return; }
-  var h='<thead><tr><th>页面 URL</th><th class="right">采样</th><th class="right">FCP</th><th class="right">LCP</th><th class="right">TTFB</th><th class="right">CLS</th><th class="right">Speed Index</th></tr></thead><tbody>';
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
+  var h='<thead><tr><th>'+t('页面 URL')+'</th><th class="right">'+t('采样')+'</th><th class="right">FCP</th><th class="right">LCP</th><th class="right">TTFB</th><th class="right">CLS</th><th class="right">Speed Index</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     var sp = (r.site && r.site !== currentSite) ? r.site : '';
@@ -1134,8 +1300,8 @@ function renderAnomaly(d){
   var a=d.anomaly||{level:'ok'};
   if(a.level!=='warn'){ bar.style.display='none'; return; }
   var txt = a.type==='spike'
-    ? '流量异常：当前区间浏览量 '+fmtNum(a.cur_pv)+' 较上一等长区间 '+fmtNum(a.prev_pv)+' 增长约 '+Math.round((a.ratio-1)*100)+'%，可能为推广活动或异常爬虫，建议核查。'
-    : '流量异常：当前区间浏览量 '+fmtNum(a.cur_pv)+' 较上一等长区间 '+fmtNum(a.prev_pv)+' 下降约 '+Math.round((1-a.ratio)*100)+'%，请关注站点可用性与收录情况。';
+    ? t('流量异常：当前区间浏览量')+fmtNum(a.cur_pv)+t(' 较上一等长区间')+fmtNum(a.prev_pv)+t(' 增长约')+Math.round((a.ratio-1)*100)+t('%，可能为推广活动或异常爬虫，建议核查。')
+    : t('流量异常：当前区间浏览量')+fmtNum(a.cur_pv)+t(' 较上一等长区间')+fmtNum(a.prev_pv)+t(' 下降约')+Math.round((1-a.ratio)*100)+t('%，请关注站点可用性与收录情况。');
   bar.className='alert '+(a.type==='spike'?'alert-up':'alert-down');
   bar.innerHTML='<span class="alert-ico">!</span> '+txt;
   bar.style.display='flex';
@@ -1163,16 +1329,16 @@ function loadVisitors(){
             var dc = res.suspect_dc_count || 0;
             var hp = res.suspect_highpv_count || 0;
             var extra = '';
-            if(dc>0 && hp>0) extra = '（'+dc+' 个疑似数据采集 / '+hp+' 个浏览量畸高）';
-            else if(dc>0) extra = '（'+dc+' 个疑似数据采集）';
-            else if(hp>0) extra = '（'+hp+' 个浏览量畸高）';
-            sc.textContent='⚠ '+res.suspect_count+' 个疑似异常'+extra;
+            if(dc>0 && hp>0) extra = '（'+dc+t(' 个疑似数据采集')+' / '+hp+t(' 个浏览量畸高')+'）';
+            else if(dc>0) extra = '（'+dc+t(' 个疑似数据采集')+'）';
+            else if(hp>0) extra = '（'+hp+t(' 个浏览量畸高')+'）';
+            sc.textContent='⚠ '+res.suspect_count+t(' 个疑似异常')+extra;
           } else { sc.style.display='none'; }
         }
         var vc = document.getElementById('visitorCount');
         if(vc){
           var tv = (typeof res.total_visitors === 'number') ? res.total_visitors : (res.data ? res.data.length : 0);
-          vc.textContent = fmtNum(tv) + ' 位';
+          vc.textContent = fmtNum(tv) + ' ' + t('位');
         }
         renderVisitors(res.data||[]);
       });
@@ -1182,19 +1348,19 @@ function loadVisitors(){
 function renderVisitors(rows){
   var el = document.getElementById('visitorList');
   if(!rows || !rows.length){
-    el.innerHTML = '<div class="empty">暂无访客数据</div>';
+    el.innerHTML = '<div class="empty">'+t('暂无访客数据')+'</div>';
     return;
   }
   var h = '<table class="visitor-table"><thead><tr>'+
     '<th style="width:30px"></th>'+
-    '<th>访客</th>'+
-    '<th>来路</th>'+
-    '<th>设备 / 浏览器</th>'+
-    '<th>运营商</th>'+
-    '<th>地区</th>'+
-    '<th class="right">页面</th>'+
-    '<th class="right">停留</th>'+
-    '<th class="right">最近活跃</th>'+
+    '<th>'+t('访客')+'</th>'+
+    '<th>'+t('来路')+'</th>'+
+    '<th>'+t('设备 / 浏览器')+'</th>'+
+    '<th>'+t('运营商')+'</th>'+
+    '<th>'+t('地区')+'</th>'+
+    '<th class="right">'+t('页面')+'</th>'+
+    '<th class="right">'+t('停留')+'</th>'+
+    '<th class="right">'+t('最近活跃')+'</th>'+
     '</tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var v = rows[i];
@@ -1203,7 +1369,7 @@ function renderVisitors(rows){
     var expandIcon = hasActions ? '<span class="expand-icon" id="exp-'+i+'">'+(expanded?'▼':'▶')+'</span>' : '<span style="color:var(--faint);font-size:10px">—</span>';
     var region = (v.cc || v.country) ? escapeHtml(cnName(v.cc, v.country)) : '<span style="color:var(--faint)">—</span>';
     var isp = v.isp ? '<span class="isp-tag" title="'+escapeHtml(v.isp)+'">'+escapeHtml(v.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
-    var ref = v.referer ? '<span class="ref" title="'+escapeHtml(v.referer)+'">'+escapeHtml(hostOf(v.referer))+'</span>' : '<span style="color:var(--faint)">直接访问</span>';
+    var ref = v.referer ? '<span class="ref" title="'+escapeHtml(v.referer)+'">'+escapeHtml(hostOf(v.referer))+'</span>' : '<span style="color:var(--faint)">'+t('直接访问')+'</span>';
     var vid = (v.visitor||'').replace(/'/g,"\\'");
     var siteEsc = (v.site||'').replace(/'/g,"\\'");
     var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+vid+'\')"' : '';
@@ -1212,16 +1378,16 @@ function renderVisitors(rows){
     if(suspect){
       var st = v.suspect_type || '';
       if(st === 'datacenter'){
-        suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||'数据中心/云主机网络，疑似数据采集/抓取')+'">疑似数据采集</span>';
+        suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||t('数据中心/云主机网络，疑似数据采集/抓取'))+'">'+t('疑似数据采集')+'</span>';
       } else if(st === 'both'){
-        suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||'数据中心/云主机网络且浏览量畸高，疑似数据采集/抓取')+'">疑似爬虫/抓取</span>';
+        suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||t('数据中心/云主机网络且浏览量畸高，疑似数据采集/抓取'))+'">'+t('疑似爬虫/抓取')+'</span>';
       } else {
-        suspectBadge = '<span class="suspect-badge" title="'+escapeHtml(v.suspect_reason||'单访客浏览量畸高，疑似爬虫')+'">浏览量畸高</span>';
+        suspectBadge = '<span class="suspect-badge" title="'+escapeHtml(v.suspect_reason||t('单访客浏览量畸高，疑似爬虫'))+'">'+t('浏览量畸高')+'</span>';
       }
     }
     h += '<tr class="visitor-row'+(suspect?' is-suspect':'')+'" '+click+'>'+
       '<td>'+expandIcon+'</td>'+
-      '<td class="mono">'+shortId(v.visitor)+(v.is_inquiry ? '<span class="inq-badge">潜在目标客户</span>' : '')+suspectBadge+'</td>'+
+      '<td class="mono">'+shortId(v.visitor)+(v.is_inquiry ? '<span class="inq-badge">'+t('潜在目标客户')+'</span>' : '')+suspectBadge+'</td>'+
       '<td>'+ref+'</td>'+
       '<td><span class="tag '+devClass(v.device)+'">'+escapeHtml(v.device)+'</span> '+escapeHtml(v.browser)+'</td>'+
       '<td>'+isp+'</td>'+
@@ -1232,8 +1398,8 @@ function renderVisitors(rows){
       '</tr>';
     if(hasActions){
       h += '<tr class="visitor-actions" id="actions-'+i+'" style="'+(expanded?'':'display:none')+'"><td colspan="9">'+
-        '<div class="actions-wrap"><div class="actions-head">访问页面（'+v.pages_count+' 个不同页面 · 共 '+v.pv+' 次动作）</div>'+
-        '<table><thead><tr><th>路径</th><th class="right">访问次数</th><th class="right">最后访问</th></tr></thead><tbody>';
+        '<div class="actions-wrap"><div class="actions-head">'+t('访问页面（{n} 个不同页面 · 共 {m} 次动作）',{n:v.pages_count,m:v.pv})+'</div>'+
+        '<table><thead><tr><th>'+t('路径')+'</th><th class="right">'+t('访问次数')+'</th><th class="right">'+t('最后访问')+'</th></tr></thead><tbody>';
       for(var j=0;j<v.pages_list.length;j++){
         var a = v.pages_list[j];
         h += '<tr><td class="cell-path mono">'+pageLink(v.site, a.path)+'</td>'+
@@ -1270,8 +1436,8 @@ function unblockVisitor(vid){
     .then(function(r){return r.json();})
     .then(function(res){
       if(res.status){ loadBlocked(); }
-      else { alert('恢复失败：'+(res.error||'未知错误')); }
-    }).catch(function(e){ alert('请求失败，请重试'); });
+      else { alert(t('恢复失败：')+(res.error||t('未知错误'))); }
+    }).catch(function(e){ alert(t('请求失败，请重试')); });
 }
 
 function loadBlocked(){
@@ -1292,7 +1458,7 @@ function renderBlocked(){
   var el=document.getElementById('blockedList');
   if(!el) return;
   var rows = blockedData||[];
-  if(!rows.length){ el.innerHTML='<div class="retention-note">暂无被屏蔽的访客。</div>'; return; }
+  if(!rows.length){ el.innerHTML='<div class="retention-note">'+t('暂无被屏蔽的访客。')+'</div>'; return; }
   var h='';
   for(var i=0;i<rows.length;i++){
     var b=rows[i];
@@ -1300,8 +1466,8 @@ function renderBlocked(){
     var when=b.created?fmtTs(b.created):'';
     h+='<div class="blocked-item"><div class="bi-main">'+
       '<div class="mono">'+shortId(b.visitor)+(b.site?(' · '+escapeHtml(b.site)):'')+'</div>'+
-      '<div class="bi-isp">'+(b.isp?escapeHtml(b.isp)+' ':'')+(b.asn?'<span class="seg-tag">AS'+escapeHtml(String(b.asn))+'</span> · ':'· ')+(b.reason?escapeHtml(b.reason):'手动屏蔽')+(when?(' · '+when):'')+'</div>'+
-      '</div><button class="mini" onclick="unblockVisitor(\''+vidEsc+'\')">恢复</button></div>';
+      '<div class="bi-isp">'+(b.isp?escapeHtml(b.isp)+' ':'')+(b.asn?'<span class="seg-tag">AS'+escapeHtml(String(b.asn))+'</span> · ':'· ')+(b.reason?escapeHtml(b.reason):t('手动屏蔽'))+(when?(' · '+when):'')+'</div>'+
+      '</div><button class="mini" onclick="unblockVisitor(\''+vidEsc+'\')">'+t('恢复')+'</button></div>';
   }
   el.innerHTML=h;
 }
@@ -1314,11 +1480,11 @@ function toggleBlocked(){
   if(!el||!arrow||!label) return;
   if(blockedExpanded){
     el.style.display='block';
-    arrow.textContent='▾'; label.textContent='收起已屏蔽访客';
+    arrow.textContent='▾'; label.textContent=t('收起已屏蔽访客');
     if(blockedData===null){ loadBlocked(); } else { renderBlocked(); }
   } else {
     el.style.display='none';
-    arrow.textContent='▸'; label.textContent='展开已屏蔽访客';
+    arrow.textContent='▸'; label.textContent=t('展开已屏蔽访客');
   }
 }
 
@@ -1333,18 +1499,18 @@ function devClass(dev){ return dev==='手机'?'dev-mobile':(dev==='平板'?'dev-
 function loadRecent(isLive){
   if(!currentSite) return;
   var windowMin = document.getElementById('selWindow').value || 10;
-  document.getElementById('liveWindowLabel').textContent = '近'+windowMin+'分钟';
+  document.getElementById('liveWindowLabel').textContent = t('近 {n} 分钟', windowMin);
   fetch(apiUrl('/api/recent?site='+encodeURIComponent(currentSite)+'&window='+windowMin+'&limit=500'))
     .then(function(r){return r.json();})
     .then(function(res){
       safeCall(function(){
         if(!res.status) return;
         var rows=res.data||[];
-        var html='<thead><tr><th>时间</th><th>访客</th><th>站点</th><th>路径</th><th>来路</th><th>设备</th><th>运营商</th><th>地区</th><th class="right">PV / 页</th></tr></thead><tbody>';
-        if(!rows.length){ html+='<tr><td class="empty" colspan="9">该窗口内暂无访问记录</td></tr>'; }
+        var html='<thead><tr><th>'+t('时间')+'</th><th>'+t('访客')+'</th><th>'+t('站点')+'</th><th>'+t('路径')+'</th><th>'+t('来路')+'</th><th>'+t('设备')+'</th><th>'+t('运营商')+'</th><th>'+t('地区')+'</th><th class="right">'+t('PV / 页')+'</th></tr></thead><tbody>';
+        if(!rows.length){ html+='<tr><td class="empty" colspan="9">'+t('该窗口内暂无访问记录')+'</td></tr>'; }
         for(var i=0;i<rows.length;i++){
           var r=rows[i];
-          var ref = r.referer ? '<span class="ref" title="'+escapeHtml(r.referer)+'">'+escapeHtml(hostOf(r.referer))+'</span>' : '<span class="ref" style="color:var(--faint)">直接访问</span>';
+          var ref = r.referer ? '<span class="ref" title="'+escapeHtml(r.referer)+'">'+escapeHtml(hostOf(r.referer))+'</span>' : '<span class="ref" style="color:var(--faint)">'+t('直接访问')+'</span>';
           var region = (r.cc || r.country) ? escapeHtml(cnName(r.cc, r.country)) : '<span style="color:var(--faint)">—</span>';
           var risp = r.isp ? '<span class="isp-tag" title="'+escapeHtml(r.isp)+'">'+escapeHtml(r.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
           var rvid=(r.visitor||'').replace(/'/g,"\\'");
@@ -1353,9 +1519,9 @@ function loadRecent(isLive){
           if(r.suspicious){
             var rst = r.suspect_type || '';
             if(rst === 'datacenter' || rst === 'both'){
-              rSuspect = '<span class="suspect-badge dc" title="'+escapeHtml(r.suspect_reason||'数据中心/云主机网络，疑似数据采集/抓取')+'">疑似数据采集</span>';
+              rSuspect = '<span class="suspect-badge dc" title="'+escapeHtml(r.suspect_reason||t('数据中心/云主机网络，疑似数据采集/抓取'))+'">'+t('疑似数据采集')+'</span>';
             } else {
-              rSuspect = '<span class="suspect-badge" title="'+escapeHtml(r.suspect_reason||'单访客浏览量畸高，疑似爬虫')+'">浏览量畸高</span>';
+              rSuspect = '<span class="suspect-badge" title="'+escapeHtml(r.suspect_reason||t('单访客浏览量畸高，疑似爬虫'))+'">'+t('浏览量畸高')+'</span>';
             }
           }
           html+='<tr class="visitor-row'+(r.suspicious?' is-suspect':'')+'"><td class="mono" style="color:var(--muted)">'+r.last_time+'</td>'+
@@ -1380,10 +1546,10 @@ function updateLiveKpis(rows, windowMin, online){
   var uv=Object.keys(ips).length;
   online = (typeof online==='number') ? online : 0;
   var html=''+
-    '<div class="kpi"><div class="label">近 '+windowMin+' 分钟 PV</div><div class="val">'+pv+'</div><div class="chg flat">实时</div></div>'+
-    '<div class="kpi"><div class="label">独立访客</div><div class="val">'+uv+'</div><div class="chg flat">实时</div></div>'+
-    '<div class="kpi"><div class="label">当前在线</div><div class="val">'+online+'</div><div class="chg flat"><span class="live-dot"></span> 实时</div></div>'+
-    '<div class="kpi"><div class="label">状态</div><div class="val" style="color:var(--up);font-size:20px">LIVE</div><div class="chg flat">监听中</div></div>';
+    '<div class="kpi"><div class="label">'+t('近 {n} 分钟 PV', windowMin)+'</div><div class="val">'+pv+'</div><div class="chg flat">'+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('独立访客')+'</div><div class="val">'+uv+'</div><div class="chg flat">'+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('当前在线')+'</div><div class="val">'+online+'</div><div class="chg flat"><span class="live-dot"></span> '+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('状态')+'</div><div class="val" style="color:var(--up);font-size:20px">LIVE</div><div class="chg flat">'+t('监听中')+'</div></div>';
   document.getElementById('liveKpis').innerHTML=html;
 }
 
@@ -1410,9 +1576,9 @@ function renderContent(d){
 function renderPagesTable(rows, targetId){
   var el=document.getElementById(targetId || 'tblPages3');
   if(!el) return;
-  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty" colspan="4">暂无数据</td></tr>'; return; }
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty" colspan="4">'+t('暂无数据')+'</td></tr>'; return; }
   var max=Math.max.apply(null, rows.map(function(r){return r.value;}));
-  var h='<thead><tr><th class="col-idx">#</th><th>页面 URL</th><th class="right">次数</th><th class="col-bar">访问量</th></tr></thead><tbody>';
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('次数')+'</th><th class="col-bar">'+t('访问量')+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     var pct=max? Math.round(r.value/max*100):0;
@@ -1438,9 +1604,9 @@ function renderSources(d){
     });
   }
   renderRankTable('tblRefCat', cats.map(function(x){return {key:x.category,name:x.label,value:x.value};}),
-    '来源类型', function(v){return v;}, true, function(r){return filterAnchor('source', r.key, r.name);}, '独立访客');
-  renderRankTable('tblRef', d.referrer, '来源域名', function(v){return v;}, true,
-    function(r){return filterAnchor('refdomain', r.name, r.name);}, '独立访客');
+    t('来源类型'), function(v){return v;}, true, function(r){return filterAnchor('source', r.key, r.name);}, t('独立访客'));
+  renderRankTable('tblRef', d.referrer, t('来源域名'), function(v){return v;}, true,
+    function(r){return filterAnchor('refdomain', r.name, r.name);}, t('独立访客'));
 }
 
 function loadWorldMap(callback){
@@ -1470,14 +1636,14 @@ function renderGeo(d){
     if(!c1) return;
     if(!d.geo_enabled){
       c1.clear();
-      c1.setOption({title:{text:'未配置 GeoIP 数据库',left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
-      document.getElementById('geoMapNote').textContent='提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。';
+      c1.setOption({title:{text:t('未配置 GeoIP 数据库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。');
       return;
     }
     if(!hasData){
       c1.clear();
-      c1.setOption({title:{text:'所选周期内暂无地域数据',left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
-      document.getElementById('geoMapNote').textContent='提示：GeoIP 已启用，只有加载 GeoIP 之后新产生的访问才会显示地域。';
+      c1.setOption({title:{text:t('所选周期内暂无地域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：GeoIP 已启用，只有加载 GeoIP 之后新产生的访问才会显示地域。');
       return;
     }
     var mapData = [];
@@ -1493,7 +1659,7 @@ function renderGeo(d){
         trigger:'item',
         formatter:function(p){
           var nm = (p.data && p.data.cnName) ? p.data.cnName : (p.name||'—');
-          return nm + '<br>独立访客: ' + fmtNum(p.value||0);
+          return nm + '<br>'+t('独立访客: ')+fmtNum(p.value||0);
         }
       },
       visualMap:{
@@ -1509,7 +1675,7 @@ function renderGeo(d){
           {min:3,   max:5,   label:'3-5',     color: mapPalette()[1]},
           {min:1,   max:2,   label:'1-2',     color: mapPalette()[0]}
         ],
-        text:['高','低'],
+        text:[t('高'),t('低')],
         showLabel:true,
         realtime:false,
         textStyle:{color: currentTheme==='light' ? '#5b6675' : '#8b98a9'},
@@ -1517,7 +1683,7 @@ function renderGeo(d){
         bottom:18
       },
       series:[{
-        name:'独立访客',
+        name:t('独立访客'),
         type:'map',
         map:'world',
         roam:true,
@@ -1526,7 +1692,7 @@ function renderGeo(d){
         data:mapData
       }]
     });
-    document.getElementById('geoMapNote').textContent='颜色越深表示该国家/地区的独立访客越多。仅展示所选周期内有访问的国家。';
+    document.getElementById('geoMapNote').textContent=t('颜色越深表示该国家/地区的独立访客越多。仅展示所选周期内有访问的国家。');
   });
 
   // 国家排行
@@ -1534,7 +1700,7 @@ function renderGeo(d){
   if(hasData){
     var max=d.countries[0].value;
     var total=d.countries.reduce(function(a,b){return a+b.value;},0);
-    var h='<thead><tr><th class="rank">#</th><th>国家 / 地区</th><th class="right">访客</th><th class="right">占比</th></tr></thead><tbody>';
+    var h='<thead><tr><th class="rank">#</th><th>'+t('国家 / 地区')+'</th><th class="right">'+t('访客')+'</th><th class="right">'+t('占比')+'</th></tr></thead><tbody>';
     for(var i=0;i<d.countries.length;i++){
       var r=d.countries[i];
       var pctv = total ? (r.value/total*100).toFixed(1) : '0.0';
@@ -1545,7 +1711,7 @@ function renderGeo(d){
     }
     el.innerHTML=h+'</tbody>';
   } else {
-    el.innerHTML='<tr><td class="empty">暂无地域数据</td></tr>';
+    el.innerHTML='<tr><td class="empty">'+t('暂无地域数据')+'</td></tr>';
   }
 
   renderGeoTree(d.geo_tree);
@@ -1554,11 +1720,11 @@ function renderGeo(d){
 function renderGeoTree(tree){
   var el=document.getElementById('geoTree');
   if(!tree || !tree.length){
-    el.innerHTML='<div class="empty">暂无地域数据</div>';
+    el.innerHTML='<div class="empty">'+t('暂无地域数据')+'</div>';
     return;
   }
   var h='<table class="visitor-table"><thead><tr><th style="width:30px"></th>'
-       +'<th>国家 / 地区</th><th class="right">访客</th><th class="right">城市数</th></tr></thead><tbody>';
+       +'<th>'+t('国家 / 地区')+'</th><th class="right">'+t('访客')+'</th><th class="right">'+t('城市数')+'</th></tr></thead><tbody>';
   for(var i=0;i<tree.length;i++){
     var c=tree[i];
     var hasCities = c.cities && c.cities.length;
@@ -1579,7 +1745,7 @@ function renderGeoTree(tree){
            +'<td></td></tr>';
       }
       h+='<tr class="visitor-actions" id="gact-'+i+'" style="display:none"><td colspan="4">'
-        +'<div class="actions-wrap"><div class="actions-head">'+escapeHtml(cnName(c.code, c.name))+' 下的城市</div>'
+        +'<div class="actions-wrap"><div class="actions-head">'+escapeHtml(cnName(c.code, c.name))+t('下的城市')+'</div>'
         +'<table><tbody>'+ch+'</tbody></table></div></td></tr>';
     }
   }
@@ -1656,8 +1822,8 @@ function renderFilterChip(){
   if(!chip) return;
   if(!activeFilter){ chip.style.display='none'; chip.innerHTML=''; return; }
   chip.style.display='inline-flex';
-  chip.innerHTML = '来源筛选：<b>'+escapeHtml(activeFilter.label)+'</b>'+
-    '<span class="filter-x" title="清除筛选" onclick="clearFilter()">×</span>';
+  chip.innerHTML = t('来源筛选：')+'<b>'+escapeHtml(activeFilter.label)+'</b>'+
+    '<span class="filter-x" title="'+t('清除筛选')+'" onclick="clearFilter()">×</span>';
 }
 function getSourceParams(){
   if(!activeFilter) return '';
@@ -1681,7 +1847,7 @@ function renderInquiryChip(){
   if(!chip) return;
   if(!inquiryOnly){ chip.style.display='none'; chip.innerHTML=''; return; }
   chip.style.display='inline-flex';
-  chip.innerHTML = '仅看：<b>潜在目标客户</b><span class="filter-x" title="清除筛选" onclick="toggleInquiryFilter()">×</span>';
+  chip.innerHTML = t('仅看：')+'<b>'+t('潜在目标客户')+'</b><span class="filter-x" title="'+t('清除筛选')+'" onclick="toggleInquiryFilter()">×</span>';
 }
 
 function onWindowChange(){
@@ -1741,16 +1907,16 @@ function loadRetentionSettings(){
 function saveRetention(){
   var inp=document.getElementById('retentionDays');
   var days=parseInt(inp.value,10);
-  if(!days || days<30){ setTip('保留天数至少为 30 天', true); return; }
+  if(!days || days<30){ setTip(t('保留天数至少为 30 天'), true); return; }
   fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({retention_days:days})})
     .then(function(r){ return r.json(); })
     .then(function(res){ safeCall(function(){
       var r=document.getElementById('retentionResult');
-      if(res.status){ if(r) r.textContent='已保存：保留 '+days+' 天'; setTip('已保存数据保留期为 '+days+' 天。'); }
-      else { if(r) r.textContent='保存失败'; setTip('保存失败：'+(res.error||'未知错误'), true); }
+      if(res.status){ if(r) r.textContent=t('已保存：保留 {n} 天', days); setTip(t('已保存数据保留期为 {n} 天。', days)); }
+      else { if(r) r.textContent=t('保存失败'); setTip(t('保存失败：')+(res.error||t('未知错误')), true); }
     }); })
-    .catch(function(e){ setTip('保存失败：'+e, true); });
+    .catch(function(e){ setTip(t('保存失败：')+e, true); });
 }
 function cleanupNow(){
   var days=parseInt(document.getElementById('retentionDays').value,10);
@@ -1759,10 +1925,10 @@ function cleanupNow(){
     .then(function(r){ return r.json(); })
     .then(function(res){ safeCall(function(){
       var r=document.getElementById('retentionResult');
-      if(res.status){ var n=(res.data&&res.data.deleted)||0; if(r) r.textContent='已清理 '+n+' 条过期事件'; setTip('已清理 '+n+' 条超过保留期的旧事件。'); }
-      else { if(r) r.textContent='清理失败'; setTip('清理失败：'+(res.error||'未知错误'), true); }
+      if(res.status){ var n=(res.data&&res.data.deleted)||0; if(r) r.textContent=t('已清理 {n} 条过期事件', n); setTip(t('已清理 {n} 条过期事件', n)); }
+      else { if(r) r.textContent=t('清理失败'); setTip(t('清理失败：')+(res.error||t('未知错误')), true); }
     }); })
-    .catch(function(e){ setTip('清理失败：'+e, true); });
+    .catch(function(e){ setTip(t('清理失败：')+e, true); });
 }
 function trackerUrl(){ return location.origin + BASE + '/tracker.js'; }
 function fillDeployCode(){ var el=document.getElementById('deployCode'); if(el) el.textContent=buildEmbedCode(); }
@@ -1792,7 +1958,7 @@ function renderManagedSites(){
   var el=document.getElementById('siteList');
   if(!el) return;
   if(!managedSites.length){
-    el.innerHTML='<div class="empty">还没有手动添加的站点。添加后会自动生成埋点代码，复制嵌入目标网站即可开始统计。</div>';
+    el.innerHTML='<div class="empty">'+t('还没有手动添加的站点。添加后会自动生成埋点代码，复制嵌入目标网站即可开始统计。')+'</div>';
     return;
   }
   var h='';
@@ -1802,13 +1968,13 @@ function renderManagedSites(){
       +' ondragstart="siteDragStart(event,'+i+')" ondragover="siteDragOver(event,'+i+')"'
       +' ondrop="siteDrop(event,'+i+')" ondragend="siteDragEnd(event)">'
       +'<div class="top">'
-      +'<div class="site-main"><span class="drag-handle" title="拖动排序">⠿</span>'
+      +'<div class="site-main"><span class="drag-handle" title="'+t('拖动排序')+'">⠿</span>'
       +'<span class="name">'+escapeHtml(s.site)+'</span>'
       +(s.label ? '<span class="label">'+escapeHtml(s.label)+'</span>' : '')+'</div>'
       +'<div class="ops">'
-      +'<button class="mini arrow" title="上移" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
-      +'<button class="mini arrow" title="下移" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
-      +'<button class="mini danger" onclick="deleteSiteByIdx('+i+')">删除</button>'
+      +'<button class="mini arrow" title="'+t('上移')+'" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
+      +'<button class="mini arrow" title="'+t('下移')+'" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
+      +'<button class="mini danger" onclick="deleteSiteByIdx('+i+')">'+t('删除')+'</button>'
       +'</div></div></div>';
   }
   el.innerHTML=h;
@@ -1832,41 +1998,41 @@ function saveSiteOrder(){
     .then(function(r){ return r.json(); })
     .then(function(res){ safeCall(function(){
       if(res.status){ loadSites(); }
-      else { setTip('保存排序失败：'+(res.error||'未知错误'), true); }
+      else { setTip(t('保存排序失败：')+(res.error||t('未知错误')), true); }
     }); })
-    .catch(function(e){ setTip('保存排序失败：'+e, true); });
+    .catch(function(e){ setTip(t('保存排序失败：')+e, true); });
 }
 function addSite(){
   var site=document.getElementById('newSite').value.trim();
   var label=document.getElementById('newLabel').value.trim();
-  if(!site){ setTip('请输入要监控的域名', true); return; }
+  if(!site){ setTip(t('请输入要监控的域名'), true); return; }
   fetch(apiUrl('/api/site'),{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({site:site,label:label})})
     .then(function(r){ return r.json(); })
     .then(function(res){
       safeCall(function(){
-        if(!res.status){ setTip('添加失败：'+(res.error||'未知错误'), true); return; }
+        if(!res.status){ setTip(t('添加失败：')+(res.error||t('未知错误')), true); return; }
         document.getElementById('newSite').value='';
         document.getElementById('newLabel').value='';
         loadManagedSites();
         loadSites();
-        setTip('已添加 '+res.site+'，请在弹窗中复制埋点代码嵌入目标网站。');
+        setTip(t('已添加 {n}，请在弹窗中复制埋点代码嵌入目标网站。', res.site));
       });
-    }).catch(function(e){ setTip('添加失败：'+e, true); });
+    }).catch(function(e){ setTip(t('添加失败：')+e, true); });
 }
 function deleteSite(site){
-  if(!confirm('确定删除站点「'+site+'」及其全部访问数据？\n此操作不可恢复。')) return;
+  if(!confirm(t('确定删除站点「{n}」及其全部访问数据？\n此操作不可恢复。', site))) return;
   fetch(apiUrl('/api/site?site='+encodeURIComponent(site)),{method:'DELETE'})
     .then(function(r){ return r.json(); })
     .then(function(res){ safeCall(function(){
       if(res.status){
-        setTip('已删除站点 '+site+'（含全部访问数据）。');
+        setTip(t('已删除站点 {n}（含全部访问数据）。', site));
         loadManagedSites(); loadSites();
       } else {
-        setTip('删除失败：'+(res.error||res.msg||'未知错误')+'（站点：'+site+'）', true);
+        setTip(t('删除失败：')+(res.error||res.msg||t('未知错误'))+' ('+t('站点')+': '+site+')', true);
       }
     }); })
-    .catch(function(e){ setTip('删除失败：'+e, true); });
+    .catch(function(e){ setTip(t('删除失败：')+e, true); });
 }
 function copyText(id){
   var txt=document.getElementById(id).textContent;
@@ -1880,6 +2046,7 @@ function fallbackCopy(txt){
 }
 
 applyThemeAttr();
+applyI18n();
 initRangeSelector();
 loadSites();
 </script>
