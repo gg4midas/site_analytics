@@ -15,7 +15,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.0"
+CONSOLE_VER="1.3.1"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -34,6 +34,11 @@ else
   exit 1
 fi
 cd "$INSTALL_DIR" || exit 1
+
+# 脚本自身绝对路径（升级/回滚后用于重新执行磁盘上的新版本）
+SELF="$INSTALL_DIR/sa-console.sh"
+# 是否处于交互菜单模式（单命令模式下升级/回滚后不应重新进入菜单）
+INTERACTIVE=0
 
 SERVICE_NAME="site_analytics"
 SVC_FILE_SYS="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -107,6 +112,9 @@ port_listening() {
   fi
 }
 
+# 升级/回滚后，当前进程仍是旧脚本的内存副本，需重新执行磁盘上的新脚本以加载新菜单。
+reload_self() { exec bash "$SELF"; }
+
 # ============================================================================
 #  动作
 # ============================================================================
@@ -121,7 +129,14 @@ do_start() {
   else
     bash start.sh && echo "已通过 start.sh 后台启动。"
   fi
-  sleep 1; do_status
+  # 等待端口真正就绪（app 启动需加载 GeoIP 库 / 初始化数据库，可能耗时数秒），
+  # 最多轮询约 12 秒，避免误报「未监听」。
+  local p="$(read_cfg port)" waited=0
+  while [ "$waited" -lt 12 ]; do
+    if port_listening "$p"; then break; fi
+    sleep 1; waited=$((waited+1))
+  done
+  do_status
 }
 
 do_stop() {
@@ -244,8 +259,10 @@ do_update_check() {
   echo "发现新版本 $latest（当前 $cur）。"
   read -r -p "是否下载更新并重启？(y/N): " ans
   case "$ans" in
-    y|Y) do_install_release "$latest" "升级到 $latest";;
-    *) echo "已取消。";;
+    y|Y)
+      do_install_release "$latest" "升级到 $latest"
+      [ "$INTERACTIVE" = "1" ] && reload_self;;
+    *) echo "已取消.";;
   esac
 }
 
@@ -279,8 +296,10 @@ do_rollback() {
   echo "即将回滚到 $chosen（会保留 data/ 数据库与本地配置，并重启服务）。"
   read -r -p "确认？(y/N): " ans
   case "$ans" in
-    y|Y) do_install_release "$chosen" "回滚到 $chosen";;
-    *) echo "已取消。";;
+    y|Y)
+      do_install_release "$chosen" "回滚到 $chosen"
+      [ "$INTERACTIVE" = "1" ] && reload_self;;
+    *) echo "已取消.";;
   esac
 }
 
@@ -300,6 +319,7 @@ show_menu() {
 }
 
 run_loop() {
+  INTERACTIVE=1
   local choice
   while true; do
     show_menu
