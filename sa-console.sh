@@ -15,7 +15,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.1"
+CONSOLE_VER="1.3.2"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -209,16 +209,47 @@ release_tarball() { echo "https://github.com/${GITHUB_REPO}/archive/refs/tags/$1
 # 把版本号归一化（去掉前导 v 与非数字字符）后比较：返回 0 表示 $1 >= $2
 ver_ge() { [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sed 's/[^0-9.]//g' | sort -V | tail -1)" = "${1#v}" ]; }
 
+# 下载 tarball（带重试与真实错误输出），供升级/回滚复用。
+# 用法：download_tarball <url> <outfile> <errfile>  —— 返回 0 成功。
+# 国内访问 GitHub/codeload 经常偶发超时，故默认重试 3 次；并把 curl 真实
+# 错误写到 errfile，便于失败时排查（不再被 2>/dev/null 吞掉）。
+download_tarball() {
+  local url="$1" out="$2" err="$3" i tries=3
+  for i in 1 2 3; do
+    if curl -fsSL --max-time 120 -o "$out" "$url" 2>"$err"; then
+      return 0
+    fi
+    if [ "$i" -lt "$tries" ]; then
+      echo "  第 $i 次下载未成功，2 秒后重试..."
+      sleep 2
+    fi
+  done
+  return 1
+}
+
 # 下载指定 tag 的 tarball，覆盖代码文件（保留 data/ 数据库与本地配置），重启服务。
 # 同时被「升级」与「回滚」复用。
 do_install_release() {
   local tag="$1" label="$2"
   if ! command -v curl >/dev/null 2>&1; then echo "未找到 curl，无法下载。"; return 1; fi
   local url; url="$(release_tarball "$tag")"
+  # 兜底地址：直接走 codeload（少一次 github.com 的 302 跳转，个别代理环境更稳）
+  local codeload_url="https://codeload.github.com/${GITHUB_REPO}/tar.gz/refs/tags/${tag}"
   local tmp; tmp=$(mktemp -d)
   echo "正在从 GitHub 下载 $tag ..."
-  if ! curl -sL --max-time 120 -o "$tmp/arc.tar.gz" "$url" 2>/dev/null; then
-    echo "下载失败，请检查网络或手动更新。"; rm -rf "$tmp"; return 1
+  local ok=0
+  if download_tarball "$url" "$tmp/arc.tar.gz" "$tmp/curl.err"; then
+    ok=1
+  elif download_tarball "$codeload_url" "$tmp/arc.tar.gz" "$tmp/curl.err"; then
+    ok=1
+  fi
+  if [ "$ok" -ne 1 ]; then
+    echo "下载失败，请检查网络或手动更新。"
+    if [ -s "$tmp/curl.err" ]; then
+      echo "curl 详细错误："; sed 's/^/  /' "$tmp/curl.err"
+    fi
+    echo "  下载地址：$url"
+    rm -rf "$tmp"; return 1
   fi
   if [ ! -s "$tmp/arc.tar.gz" ]; then echo "下载内容为空，已中止。"; rm -rf "$tmp"; return 1; fi
   mkdir -p "$tmp/x"
