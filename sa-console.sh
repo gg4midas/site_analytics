@@ -12,15 +12,15 @@
 #        升级与回滚都会保留 data/ 数据库与本地配置，仅覆盖代码文件。
 #  可选环境变量：SA_HOME  可强制指定安装目录（需含 app.py）。
 #  可选环境变量：SA_UPDATE_MIRROR  国内镜像源（解决 codeload.github.com 被墙问题）。
-#        取值可为「基址」如 https://mirror.example.com/sa  （控制台拼成 <基址>/<tag>.tar.gz），
-#        也可含 {tag} 占位符，如 https://gitee.com/u/r/repository/archive/{tag}.tar.gz。
-#        设置后：版本列表优先读 <基址>/versions.json，下载优先走镜像、失败再回退 github/codeload。
+#        取值可为「基址」如 https://mirror.example.com/sa  （控制台拼成 <基址>/<tag>.tar.gz，并读 <基址>/versions.json 取列表），
+#        也可含 {tag} 占位符，如 https://gitee.com/u/r/repository/archive/{tag}.tar.gz（Gitee 模式，列表改查 Gitee tags API）。
+#        设置后：下载优先走镜像、失败再回退 github/codeload；Gitee 模式要求仓库为「公开」。
 #        也可把镜像地址写入安装目录下的 .update_mirror（一行一个 URL），持久生效。
 # ============================================================================
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.3"
+CONSOLE_VER="1.3.4"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -209,13 +209,34 @@ latest_release_tag() {
 # 列出所有 Release tag（按 GitHub 返回顺序，通常最新在前）
 list_release_tags() {
   command -v curl >/dev/null 2>&1 || { echo ""; return; }
-  # 国内镜像优先：<基址>/versions.json -> {"latest":"vX","tags":["vX",...]}
+  # 国内镜像优先
   if [ -n "${SA_UPDATE_MIRROR:-}" ]; then
-    local mj="${SA_UPDATE_MIRROR%/}/versions.json"
-    local mt
-    mt=$(curl -fsSL --max-time 20 "$mj" 2>/dev/null | grep -oE '"v[0-9][0-9.]*"' | tr -d '"' | sort -u)
-    if [ -n "$mt" ]; then echo "$mt"; return; fi
+    case "$SA_UPDATE_MIRROR" in
+      *gitee.com*)
+        # Gitee 模板：从 archive 地址反推 owner/repo，查 Gitee tags API
+        # （要求 Gitee 仓库为「公开」，否则匿名无法列标签/下包）
+        local owner repo gt
+        owner=$(echo "$SA_UPDATE_MIRROR" | sed -E 's#https://gitee\.com/([^/]+)/.*#\1#')
+        repo=$(echo  "$SA_UPDATE_MIRROR" | sed -E 's#https://gitee\.com/[^/]+/([^/]+)/repository/archive.*#\1#')
+        if [ -n "$owner" ] && [ -n "$repo" ]; then
+          gt=$(curl -fsSL --max-time 20 "https://gitee.com/api/v5/repos/$owner/$repo/tags?per_page=30" 2>/dev/null \
+               | grep -oE '"name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/' | sort -V | tail -30)
+          if [ -n "$gt" ]; then echo "$gt"; return; fi
+        fi
+        ;;
+      *'{tag}'*)
+        # 自定义 {tag} 模板（非 gitee）：没有版本清单，回退 GitHub API
+        ;;
+      *)
+        # 目录式镜像：<基址>/versions.json -> {"latest":"vX","tags":["vX",...]}
+        local mj="${SA_UPDATE_MIRROR%/}/versions.json"
+        local mt
+        mt=$(curl -fsSL --max-time 20 "$mj" 2>/dev/null | grep -oE '"v[0-9][0-9.]*"' | tr -d '"' | sort -u)
+        if [ -n "$mt" ]; then echo "$mt"; return; fi
+        ;;
+    esac
   fi
+  # 回退 GitHub API
   curl -s --max-time 10 -H "Accept: application/vnd.github+json" "$GH_API/releases?per_page=30" 2>/dev/null \
     | grep -oE '"tag_name"\s*:\s*"[^"]+"' | sed -E 's/.*"([^"]+)".*/\1/'
 }
