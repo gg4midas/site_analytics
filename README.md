@@ -334,6 +334,17 @@ GitHub 的源码包实际存放在 `codeload.github.com`，该域名在国内经
 > 也可不写文件、临时用环境变量：`SA_UPDATE_MIRROR='https://gitee.com/operations-go_0/site_analytics/repository/archive/{tag}.tar.gz' sa-console update`。
 > 镜像地址支持 `{tag}` 占位符（自动替换为版本号）；目录型镜像则写成基址（控制台拼成 `<基址>/<tag>.tar.gz`，并额外读取 `<基址>/versions.json` 作为版本清单）。
 
+### 自建镜像生成器（make_mirror.sh，可选）
+
+若没有现成 Gitee 仓库、想完全自托管镜像，仓库内置 `make_mirror.sh`：在**能直连 GitHub** 的机器（通常是国外服务器）运行一次，即可把各 Release 的 tarball、`versions.json` 与最新 `sa-console.sh` 拉到本地目录，再将该目录通过 Web 服务 / 对象存储 + CDN 暴露为 https 地址，国内服务器把 `.update_mirror` 指向它即可。
+
+```bash
+SA_UPDATE_MIRROR_OUT=/var/www/site_analytics-mirror bash make_mirror.sh
+# 不指定 OUT 时默认输出到 ./site_analytics-mirror
+```
+
+之后把输出目录暴露为 https（如 `https://<你的域名>/site_analytics-mirror/`），并在国内服务器执行 `echo 'https://<你的域名>/site_analytics-mirror' > /安装目录/.update_mirror`，升级 / 回滚即走你的自建镜像。
+
 ### 单命令（便于脚本 / 监控调用）
 
 ```bash
@@ -413,6 +424,8 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 | `GET  /api/sites` | token* | 站点列表（手动注册 ∪ 事件发现，去重） |
 | `GET  /api/stats?site=&days=` | token* | 聚合统计 |
 | `GET  /api/recent?site=&limit=` | token* | 最近事件（实时监控） |
+| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | token* | 访客明细（含可疑 / 询盘计数，可按来源、引荐域、询盘筛选） |
+| `GET  /api/months?site=` | token* | 该站点有数据的月份列表（面板按月切换） |
 | `GET  /api/site` | token* | 手动注册的站点及备注 |
 | `POST /api/site` | token* | 添加站点 `{"site","label"}` |
 | `DELETE /api/site?site=` | token* | 删除站点注册 |
