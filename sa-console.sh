@@ -4,7 +4,7 @@
 #  用法（在服务器上）：
 #     bash sa-console.sh                              # 交互式菜单
 #     sa-console                                      # 若已软链到 /usr/local/bin
-#     sa-console start|stop|restart|status|update     # 单命令（便于脚本调用）
+#     sa-console start|stop|restart|status|health|logs|update   # 单命令（便于脚本调用）
 #     sa-console rollback <tag>                        # 单命令回滚（如 v1.2.0）
 #  说明：自动定位安装目录（优先脚本同级目录，其次 /opt/site_analytics），
 #        兼容「nohup + start.sh」与「systemd 服务」两种运行方式。
@@ -20,7 +20,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.7"
+CONSOLE_VER="1.3.8"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -186,6 +186,29 @@ do_logs() {
   else
     echo "未找到日志文件 $LOG_FILE"
   fi
+}
+
+do_health() {
+  local p="$(read_cfg port)" host="$(read_cfg host)" pids code ok=1
+  echo "===== 健康检查 ====="
+  echo "安装目录 : $INSTALL_DIR"
+  echo "运行方式 : $(is_systemd && echo systemd || echo nohup/start.sh)"
+  pids="$(find_pids | tr '\n' ' ')"
+  if [ -n "$pids" ]; then echo "进程     : 运行中 (PID: $pids)"; else echo "进程     : 未运行"; ok=0; fi
+  if port_listening "$p"; then echo "端口监听 : ${host}:${p} 已监听"; else echo "端口监听 : ${host}:${p} 未监听（若已设反向代理，应用仍需在本机该端口监听，代理只是转发，不会替应用监听）"; ok=0; fi
+  if command -v curl >/dev/null 2>&1; then
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
+    if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then
+      echo "HTTP 探针 : http://127.0.0.1:${p}/ 返回 $code（正常；直连本机应用，不受反向代理影响）"
+    else
+      echo "HTTP 探针 : http://127.0.0.1:${p}/ 返回『${code:-无响应}』（异常）"
+      ok=0
+    fi
+  else
+    echo "HTTP 探针 : 未找到 curl，跳过"
+  fi
+  if [ -d "$DATA_DIR" ] && [ -w "$DATA_DIR" ]; then echo "数据目录 : $DATA_DIR（存在且可写）"; else echo "数据目录 : $DATA_DIR（缺失或不可写）"; ok=0; fi
+  if [ "$ok" = "1" ]; then echo "结论     : 健康 ✅"; else echo "结论     : 异常 ⚠️  请结合『7: 查看日志』排查"; fi
 }
 
 # ============================================================================
@@ -388,6 +411,8 @@ show_menu() {
   echo " 3: 启动服务"
   echo " 4: 关闭服务"
   echo " 5: 重启服务"
+  echo " 6: 健康检查"
+  echo " 7: 查看日志"
   echo " 0: 退出"
   echo "======================================================"
 }
@@ -397,13 +422,15 @@ run_loop() {
   local choice
   while true; do
     show_menu
-    read -r -p "请输入操作编号 (0-5): " choice
+    read -r -p "请输入操作编号 (0-7): " choice
     case "$choice" in
       1) do_update_check;;
       2) do_rollback;;
       3) do_start;;
       4) do_stop;;
       5) do_restart;;
+      6) do_health;;
+      7) do_logs;;
       0|q|Q) echo "再见。"; exit 0;;
       *) echo "无效选项：$choice";;
     esac
@@ -418,6 +445,8 @@ case "${1:-}" in
   stop)   do_stop;;
   restart) do_restart;;
   status) do_status;;
+  health) do_health;;
+  logs)   do_logs;;
   update) do_update_check;;
   rollback)
     if [ -z "${2:-}" ]; then
