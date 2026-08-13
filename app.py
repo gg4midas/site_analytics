@@ -45,7 +45,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.3.9"
+VERSION = "1.4.0"
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -315,7 +315,15 @@ class StatEngine(object):
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_visitor_ts ON events(visitor, ts)")
             c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
-            c.execute("CREATE TABLE IF NOT EXISTS sites(site TEXT PRIMARY KEY, label TEXT, created INTEGER)")
+            c.execute("CREATE TABLE IF NOT EXISTS sites(site TEXT PRIMARY KEY, label TEXT, created INTEGER, site_key TEXT)")
+            # 迁移：老库可能缺少 site_key 列（每站点独立的部署令牌 / data-id）
+            try:
+                c.execute("ALTER TABLE sites ADD COLUMN site_key TEXT")
+            except Exception:
+                pass
+            # 注意：已有站点不自动补造 site_key。未启用令牌的已知站点在「宽松模式」下仍照常接收
+            # （现有监控零中断、平滑对接）；要启用每站点保护，请在面板「站点管理」点「重新生成令牌」，
+            # 用生成的新代码重新嵌入即可。这样可避免升级当天旧嵌入（无令牌）被一刀切拒收导致数据中断。
             # 软屏蔽访客表：确认为异常爬虫后加入，读取统计时排除，但保留原始事件（可恢复）
             c.execute("""CREATE TABLE IF NOT EXISTS blocked_visitors(
                 visitor TEXT PRIMARY KEY,
@@ -763,6 +771,18 @@ class StatEngine(object):
         except Exception:
             return False
 
+    def get_site_key(self, site):
+        """返回站点的部署令牌（site_key）；无则返回空串。"""
+        if not site:
+            return ''
+        try:
+            conn = self._conn()
+            row = conn.execute("SELECT site_key FROM sites WHERE site=? LIMIT 1", (site,)).fetchone()
+            conn.close()
+            return (row[0] or '') if row else ''
+        except Exception:
+            return ''
+
     # ---------------- 站点自定义排序 ----------------
     def get_site_order(self):
         """返回用户自定义的主域顺序列表（存于 meta 表）。"""
@@ -887,10 +907,11 @@ class StatEngine(object):
             return False, '站点名不合法（应为合法域名，如 example.com）'
         label = (label or '').strip()[:80]
         try:
+            import secrets as _secrets
             conn = self._conn()
             conn.execute(
-                "INSERT OR IGNORE INTO sites(site, label, created) VALUES(?,?,?)",
-                (site, label, int(datetime.now().timestamp() * 1000)))
+                "INSERT OR IGNORE INTO sites(site, label, created, site_key) VALUES(?,?,?,?)",
+                (site, label, int(datetime.now().timestamp() * 1000), _secrets.token_urlsafe(16)))
             conn.commit(); conn.close()
             return True, site
         except Exception as e:
@@ -912,14 +933,14 @@ class StatEngine(object):
             return False
 
     def list_sites(self):
-        """返回所有已知站点，按主域归并：子域统一归属到其主域下，只显示主域。"""
+        """返回所有已知站点，按主域归并：子域统一归属到其主域下，只显示主域。含站点级部署令牌 site_key。"""
         try:
             conn = self._conn()
-            label_map = {}
-            for r in conn.execute("SELECT site, label FROM sites").fetchall():
+            meta = {}
+            for r in conn.execute("SELECT site, label, site_key FROM sites").fetchall():
                 if r[0]:
-                    label_map[r[0]] = r[1] or ''
-            seen = set(label_map.keys())
+                    meta[r[0]] = {'label': r[1] or '', 'key': r[2] or ''}
+            seen = set(meta.keys())
             for r in conn.execute("SELECT DISTINCT site FROM events").fetchall():
                 if r[0]:
                     seen.add(r[0])
@@ -929,13 +950,15 @@ class StatEngine(object):
             for s in seen:
                 root = self._domain_root(s)
                 if root not in roots:
-                    roots[root] = {'root': root, 'label': label_map.get(root, ''), 'subs': []}
+                    _m = meta.get(root) or {}
+                    roots[root] = {'root': root, 'label': _m.get('label', ''),
+                                   'site_key': _m.get('site_key', ''), 'subs': []}
                 roots[root]['subs'].append(s)
                 # 若主域没有 label，取第一个子域的 label 兜底
                 if s != root and not roots[root]['label']:
-                    roots[root]['label'] = label_map.get(s, '')
+                    roots[root]['label'] = (meta.get(s) or {}).get('label', '')
             ordered = self._sort_by_order(list(roots.keys()))
-            return [{'site': r, 'label': roots[r]['label']} for r in ordered]
+            return [{'site': r, 'label': roots[r]['label'], 'site_key': roots[r]['site_key']} for r in ordered]
         except Exception:
             return []
 
@@ -2081,15 +2104,17 @@ class StatEngine(object):
         except Exception as e:
             self._log('get_recent ERROR: %s' % e)
             return {'rows': [], 'online': 0}
-# ---------------- 部署令牌（防 tracker 盗用 / 抗压）----------------
-# 服务端通过环境变量设定令牌，tracker 通过 data-key 注入并随每次上报带回：
-#  - 未设置 SA_DEPLOY_KEY：端点完全开放（向后兼容，等同旧版行为）。
-#  - 已设置 SA_DEPLOY_KEY（默认「宽松模式」）：
-#      * 已知站点（已在 sites 表或已有历史事件的站点）：照常接收，无需令牌 —— 现有监控零中断、平滑对接。
-#      * 未知（新）站点：必须携带正确令牌，否则 403 拒绝（直接挡掉被盗用在陌生高流量域名上的情况，
-#        不产生 GeoIP/落库开销，从根本上消除服务器压力）。
-#  - 设 SA_REQUIRE_KEY=1（「严格模式」，重新嵌入带令牌的脚本后开启）：所有站点都须携带正确令牌，
-#    连已知站点被盗用上报时同样拒绝，彻底锁死。
+# ---------------- 站点部署令牌（防 tracker 盗用 / 抗压）----------------
+# 每站点独立令牌：sites.site_key 由「添加站点」时自动生成；老站点可在面板「站点管理」点「重新生成令牌」启用。
+# tracker 通过 data-id 随每次上报带回，服务端校验通过才落库，否则 403 拒绝（不触发 GeoIP/落库开销），
+# 从根本上消除「脚本被盗用后在高流量陌生站点产生服务器压力」的问题。
+# 默认（宽松模式）决策树：
+#  - 站点已启用每站点令牌（site_key 非空）：必须携带正确 data-id，否则 403 拒绝（精确防盗用）。
+#  - 站点未启用令牌：
+#      * 已知站点（已登记 / 已有历史数据）→ 宽松放行，保证现有监控平滑对接、零中断；
+#      * 未知（未登记、无数据）站点 → 拒绝（须先在面板「+ 添加站点」登记并获取令牌，从根源挡住陌生盗用）。
+#  - 设 SA_REQUIRE_KEY=1（--require-key，「严格模式」，全站重新嵌入带令牌脚本后开启）：
+#    所有站点都必须携带正确令牌（站点令牌优先，其次全局兜底令牌），连已知站点被盗用上报也拒绝，彻底锁死。
 # 注：令牌写在公开 JS 中，仅能挡住「直接打 endpoint / 陌生域名盗用」这类最常见滥用，并支持随时轮换/吊销；
 #     对「完整盗走含令牌的 tracker.js 并原样复用」的针对性攻击无能为力（客户端无法保密），
 #     那种情况需配合反向代理层按来源 IP/域名白名单等额外手段。
@@ -2100,8 +2125,8 @@ REQUIRE_KEY = (os.environ.get('SA_REQUIRE_KEY', '0') or '0') == '1'
 class Handler(BaseHTTPRequestHandler):
     engine = None
     token = DEFAULT_TOKEN
-    deploy_key = ''      # 运行时由 main() 设为环境变量 SA_DEPLOY_KEY 的值
-    require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'
+    deploy_key = ''      # 运行时由 main() 设为环境变量 SA_DEPLOY_KEY 的值（全局兜底令牌）
+    require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'（严格模式）
     www_root = None
 
     def _send_json(self, obj, code=200):
@@ -2133,6 +2158,27 @@ class Handler(BaseHTTPRequestHandler):
         if not self.token:
             return True
         return query.get('token', [''])[0] == self.token
+
+    def _deploy_ok(self, ev):
+        """站点部署令牌校验（防 tracker 盗用 / 抗压）。
+        每站点独立令牌（sites.site_key），tracker 通过 data-id 随事件带回；兼容全局兜底令牌。
+        - 站点已启用每站点令牌（site_key 非空）：必须携带正确 data-id，否则 403 拒绝（精确防盗用）。
+        - 站点未启用令牌：
+            * 已知站点（已登记 / 已有历史数据）→ 宽松放行，保证现有监控平滑对接、零中断；
+            * 未知（未登记、无数据）站点 → 拒绝（须先在面板「+ 添加站点」登记并获取令牌，挡住陌生盗用）。
+        - 严格模式（--require-key / SA_REQUIRE_KEY=1）：所有站点都必须携带正确令牌（站点令牌优先，其次全局兜底）。"""
+        _site = (ev.get('site') or '').strip().lower()
+        _id = (ev.get('id') or ev.get('key') or self.headers.get('X-Site-Key', '') or '').strip()
+        _sk = self.engine.get_site_key(_site)
+        if _sk:
+            return _id == _sk
+        if Handler.require_key:
+            return bool(Handler.deploy_key) and (_id == Handler.deploy_key)
+        if self.engine.site_known(_site):
+            return True
+        if Handler.deploy_key:
+            return _id == Handler.deploy_key
+        return False
 
     def client_ip(self):
         """优先取反向代理透传的真实访客 IP（X-Forwarded-For / X-Real-IP）。"""
@@ -2207,9 +2253,14 @@ class Handler(BaseHTTPRequestHandler):
                 'lang': query.get('lang', [''])[0],
                 'screen': query.get('screen', [''])[0],
                 'duration': query.get('duration', ['0'])[0],
+                'id': query.get('id', [''])[0],
+                'key': query.get('key', [''])[0],
                 'ua': self.headers.get('User-Agent', ''),
                 'ip': self.client_ip(),
             }
+            if not self._deploy_ok(ev):
+                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403)
+                return
             ok = self.engine.add_event(ev)
             self._send_json({'status': ok}, 200 if ok else 400)
             return
@@ -2483,6 +2534,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
+        if path in ('/api/site/key', '/api/site/key/'):
+            # 重新生成某站点的每站点部署令牌（启用 / 轮换防盗用令牌）；须在面板用新代码重新嵌入
+            if not self._check_token(parse_qs(parsed.query)):
+                self._send_json({'error': 'token 错误'}, 401); return
+            try:
+                length = int(self.headers.get('Content-Length', 0) or 0)
+                raw = self.rfile.read(length) if length else b''
+                body = {}
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                import secrets as _secrets
+                site = self.engine._normalize_site(body.get('site', ''))
+                if not site:
+                    self._send_json({'status': False, 'error': '站点名不合法'}, 400); return
+                new_key = _secrets.token_urlsafe(16)
+                conn = self.engine._conn()
+                conn.execute("UPDATE sites SET site_key=? WHERE site=?", (new_key, site))
+                conn.commit(); conn.close()
+                self._send_json({'status': True, 'site': site, 'site_key': new_key})
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
         if path not in ('/api/event', '/api/event/'):
             self.send_error(404); return
         try:
@@ -2506,21 +2582,12 @@ class Handler(BaseHTTPRequestHandler):
                     ev = {}
             ev.setdefault('ua', self.headers.get('User-Agent', ''))
             ev.setdefault('ip', self.client_ip())
-            # ---- 部署令牌（防 tracker 盗用 / 抗压）----
-            # 原理：tracker 通过 data-key 随事件带回令牌；服务端校验后再落库，
-            # 非法/陌生请求在产生任何 GeoIP/落库开销前即被 403 拒绝。
-            _site = (ev.get('site') or '').strip().lower()
-            if Handler.deploy_key:
-                _provided = (ev.get('key') or self.headers.get('X-Site-Key', '') or '').strip()
-                if Handler.require_key:
-                    # 严格模式：所有站点都必须携带正确令牌
-                    _ok = (_provided == Handler.deploy_key)
-                else:
-                    # 宽松模式：已知站点（已有数据）照常接收；未知站点必须带正确令牌
-                    _ok = self.engine.site_known(_site) or (_provided == Handler.deploy_key)
-                if not _ok:
-                    self._send_json({'status': False, 'error': 'deploy key 校验失败'}, 403)
-                    return
+            # ---- 站点部署令牌（防 tracker 盗用 / 抗压）----
+            # 每站点独立令牌（sites.site_key），由面板在「添加站点」时自动生成；
+            # tracker 通过 data-id 随事件带回，服务端校验通过才落库，否则 403 拒绝（不触发 GeoIP/落库）。
+            if not self._deploy_ok(ev):
+                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403)
+                return
             ok = self.engine.add_event(ev)
             self._send_json({'status': ok}, 200 if ok else 400)
         except Exception as e:
@@ -2538,9 +2605,9 @@ def main():
     ap.add_argument('--port', type=int, default=DEFAULT_PORT, help='监听端口 (默认 8899)')
     ap.add_argument('--token', default=DEFAULT_TOKEN, help='面板访问令牌 (留空则不鉴权)')
     ap.add_argument('--deploy-key', default=os.environ.get('SA_DEPLOY_KEY', ''),
-                    help='部署令牌（防 tracker 盗用）：启用后 tracker 须随 data-key 上报正确令牌，否则拒绝陌生站点')
+                    help='全局兜底部署令牌（防 tracker 盗用）：设后可作所有站点的统一令牌；每站点独立令牌由面板「添加站点」自动生成')
     ap.add_argument('--require-key', action='store_true',
-                    help='严格模式：所有站点（含已知站点）都必须携带正确部署令牌，否则拒绝（重新嵌入带令牌的脚本后开启）')
+                    help='严格模式：所有站点都必须携带正确部署令牌（站点令牌或全局令牌），否则拒绝（全站重新嵌入带令牌脚本后开启）')
     ap.add_argument('--data-dir', default=DEFAULT_DATA_DIR, help='数据目录')
     ap.add_argument('--geoip-db', default=DEFAULT_GEO_DB, help='GeoLite2 数据库路径（缺省 geoip/GeoLite2-City.mmdb）')
     ap.add_argument('--asn-db', default=DEFAULT_ASN_DB, help='GeoLite2-ASN 数据库路径（缺省 geoip/GeoLite2-ASN.mmdb，用于识别访客运营商）')

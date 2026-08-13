@@ -20,7 +20,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.9"
+CONSOLE_VER="1.4.0"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -122,6 +122,21 @@ port_listening() {
   fi
 }
 
+# 等待应用真正就绪：优先 HTTP 探针（直连本机，不受反向代理影响），其次端口监听；
+# 最多轮询约 30 秒，覆盖升级后冷启动较慢的场景，避免误报「未监听」。
+wait_ready() {
+  local p="$1" host="$2" waited=0 code
+  while [ "$waited" -lt 30 ]; do
+    if port_listening "$p"; then return 0; fi
+    if command -v curl >/dev/null 2>&1; then
+      code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
+      if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then return 0; fi
+    fi
+    sleep 1; waited=$((waited+1))
+  done
+  return 1
+}
+
 # 升级/回滚后，当前进程仍是旧脚本的内存副本，需重新执行磁盘上的新脚本以加载新菜单。
 reload_self() { exec bash "$SELF"; }
 
@@ -139,13 +154,9 @@ do_start() {
   else
     bash start.sh && echo "已通过 start.sh 后台启动。"
   fi
-  # 等待端口真正就绪（app 启动需加载 GeoIP 库 / 初始化数据库，可能耗时数秒），
-  # 最多轮询约 12 秒，避免误报「未监听」。
-  local p="$(read_cfg port)" waited=0
-  while [ "$waited" -lt 12 ]; do
-    if port_listening "$p"; then break; fi
-    sleep 1; waited=$((waited+1))
-  done
+  # 等待端口真正就绪（app 启动需加载 GeoIP 库 / 初始化数据库，可能耗时数秒；
+  # 升级后首次冷启动更慢）。用 HTTP 探针最多轮询约 30 秒，避免误报「未监听」。
+  wait_ready "$(read_cfg port)" "$(read_cfg host)"
   do_status
 }
 
@@ -173,7 +184,18 @@ do_status() {
   else
     echo "服务状态 : 未运行"
   fi
-  if port_listening "$p"; then echo "端口监听 : ${host}:${p} 已监听"; else echo "端口监听 : ${host}:${p} 未监听"; fi
+  if port_listening "$p"; then
+    echo "端口监听 : ${host}:${p} 已监听"
+  elif command -v curl >/dev/null 2>&1; then
+    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
+    if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then
+      echo "端口监听 : ${host}:${p} 已监听"
+    else
+      echo "端口监听 : ${host}:${p} 未监听"
+    fi
+  else
+    echo "端口监听 : ${host}:${p} 未监听"
+  fi
   tok="$(read_cfg token)"
   if [ -n "$tok" ]; then echo "访问令牌 : 已设置（面板需 ?token=...）"; else echo "访问令牌 : 未设置（建议配合反向代理 + 访问控制）"; fi
   echo "应用版本 : $(app_version)"
@@ -212,7 +234,7 @@ do_health() {
 }
 
 do_genkey() {
-  # 生成一个随机部署令牌，并提示如何启用（防 tracker 盗用）
+  # 生成可选「全局兜底部署令牌」（SA_DEPLOY_KEY）。每站点独立令牌由面板自动生成，本命令仅作统一管控用。
   local key
   if command -v python3 >/dev/null 2>&1; then
     key=$(python3 -c "import secrets;print(secrets.token_urlsafe(24))" 2>/dev/null)
@@ -221,7 +243,7 @@ do_genkey() {
     key=$(head -c 18 /dev/urandom 2>/dev/null | base64 2>/dev/null | tr '+/' '-_' | tr -d '=' | head -c 24)
   fi
   [ -z "$key" ] && key="$(date +%s%N)_deploykey"
-  echo "===== 部署令牌（SA_DEPLOY_KEY）====="
+  echo "===== 全局兜底部署令牌（SA_DEPLOY_KEY）====="
   echo "生成的令牌: $key"
   echo ""
   echo "启用方式（任选其一）："
@@ -229,13 +251,13 @@ do_genkey() {
   echo "  2) 环境变量（推荐，写入 systemd 单元 Environment=SA_DEPLOY_KEY=$key）："
   echo "       SA_DEPLOY_KEY=$key"
   echo ""
-  echo "然后在每个站点的埋点脚本注入 data-key："
-  echo "  <script src=\"https://你的分析域名/tracker.js\" data-site=\"example.com\" data-key=\"$key\" defer></script>"
+  echo "说明：每个站点的独立令牌由面板「站点管理」自动生成并显示在埋点代码里，复制即用。"
+  echo "本命令生成的是可选的「全局兜底令牌」，任何站点都可使用。"
   echo ""
   echo "模式说明："
   echo "  - 默认「宽松模式」：已知站点（已有数据）照常接收，仅拦截陌生站点 —— 现有监控零中断。"
-  echo "  - 严格模式：启动加 --require-key（或 SA_REQUIRE_KEY=1），所有站点都须带正确令牌。"
-  echo "    建议：先宽松模式全站重新嵌入带 data-key 的脚本，确认无误后再开启 --require-key 彻底锁死。"
+  echo "  - 严格模式：启动加 --require-key（或 SA_REQUIRE_KEY=1），所有站点都须带正确令牌（站点令牌或全局令牌）。"
+  echo "    建议：先在面板「站点管理」为每个站点复制带令牌的代码嵌入，确认无误后再开启 --require-key 彻底锁死。"
 }
 
 # ============================================================================

@@ -45,5 +45,3 @@ echo "启动站点流量统计（埋点版）监听 127.0.0.1:$PORT（后台运�
 nohup python3 app.py "${ARGS[@]}" > run.log 2>&1 &
 PID=$!
 echo "已启动，PID=$PID"
-echo "查看日志：tail -f run.log"
-echo "健康检查：curl -I http://127.0.0.1:$PORT/"

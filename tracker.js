@@ -6,8 +6,9 @@
  *      / 部署指南）：运行时创建 <script> 加载远程文件并显式带 data-endpoint，缓存插件在 HTML 输出阶段
  *      看不到外部 src，因此不会本地化，也无需在每个站点的插件里配 exclude。
  *      也可手动指定上报端点：data-endpoint="https://你的分析域名/api/event"
- * 防盗用（可选）：服务端设 SA_DEPLOY_KEY 后，给脚本注入 data-key 即可启用部署令牌校验：
- *   <script src="https://你的分析域名/tracker.js" data-site="example.com" data-key="你的令牌" defer></script>
+ * 防盗用（可选，每站点独立）：每个站点在面板「添加站点」时自动获得一个部署令牌，
+ *   嵌入时通过 data-id 注入即可启用校验（推荐直接用面板自动生成的埋点代码，已含 data-id）：
+ *   <script src="https://你的分析域名/tracker.js" data-site="example.com" data-id="站点令牌" defer></script>
  *   令牌随每次上报带回，服务端校验通过才落库；未带/错误令牌的陌生站点上报将被拒绝。
  *   令牌写在公开 JS 中，仅能挡「直接打 endpoint / 陌生域名盗用」这类常见滥用，并可随时轮换/吊销。
  * 说明：
@@ -34,7 +35,7 @@
 
   var tag = selfTag();
   var SITE = (tag && tag.getAttribute('data-site')) || location.hostname;
-  var DEPLOY_KEY = (tag && tag.getAttribute('data-key')) || '';
+  var SITE_ID = (tag && (tag.getAttribute('data-id') || tag.getAttribute('data-key'))) || '';
   var ENDPOINT = (tag && tag.getAttribute('data-endpoint')) ||
                  (tag ? tag.src.split('/tracker')[0] : location.origin) + '/api/event';
   var RESPECT_DNT = !!(tag && tag.getAttribute('data-respect-dnt') === 'true');
@@ -115,7 +116,7 @@
     ev.ua = navigator.userAgent;
     ev.lang = navigator.language || '';
     ev.screen = (window.screen ? (window.screen.width + 'x' + window.screen.height) : '');
-    if (DEPLOY_KEY) ev.key = DEPLOY_KEY;
+    if (SITE_ID) { ev.id = SITE_ID; ev.key = SITE_ID; }
     var body;
     try { body = JSON.stringify(ev); } catch (e) { return; }
     if (DEBUG) console.log('[tracker] send ->', ENDPOINT, ev);
@@ -262,5 +263,5 @@
   collectPerf();
 
   // 暴露调试接口（可选）
-  window.__ssa = { site: SITE, visitor: visitor, session: session, endpoint: ENDPOINT, deployKey: DEPLOY_KEY ? 'set' : 'unset' };
+  window.__ssa = { site: SITE, visitor: visitor, session: session, endpoint: ENDPOINT, siteId: SITE_ID ? 'set' : 'unset' };
 })();

@@ -505,7 +505,7 @@ var I18N_EN = {
 '刷新':'Refresh','深色':'Dark','浅色':'Light',
 '+ 添加站点':'+ Add Site','应用':'Apply','至':'to',
 '保存保留期':'Save Retention','立即清理过期数据':'Clean Expired Now',
-'复制':'Copy','添加站点':'Add Site',
+'复制':'Copy','复制埋点代码':'Copy embed code','添加站点':'Add Site','重新生成令牌':'Regenerate token','启用令牌':'Enable token',
 '展开已屏蔽访客':'Show blocked visitors','收起已屏蔽访客':'Hide blocked visitors','恢复':'Restore',
 '加载中…':'Loading…',
 '访问分析摘要':'Traffic Summary',
@@ -2056,17 +2056,19 @@ function cleanupNow(){
 }
 function trackerUrl(){ return location.origin + BASE + '/tracker.js'; }
 function fillDeployCode(){ var el=document.getElementById('deployCode'); if(el) el.textContent=buildEmbedCode(); }
-function buildEmbedCode(){
+function buildEmbedCode(siteKey){
   var base = location.origin + BASE;
-  return '<script>\n(function(){\n'
+  var code = '<script>\n(function(){\n'
     + '  var s=document.createElement("script");\n'
     + '  s.src="'+base+'/tracker.js";\n'
     + '  s.defer=true;\n'
-    + '  s.setAttribute("data-endpoint","'+base+'/api/event");\n'
-    + '  document.head.appendChild(s);\n'
+    + '  s.setAttribute("data-endpoint","'+base+'/api/event");\n';
+  if(siteKey) code += '  s.setAttribute("data-id","'+siteKey+'");\n';
+  code += '  document.head.appendChild(s);\n'
     + '})();\n<\/script>';
+  return code;
 }
-function embedCode(site){ return buildEmbedCode(); }
+function embedCode(site, siteKey){ return buildEmbedCode(siteKey); }
 var managedSites=[];
 function loadManagedSites(){
   fetch(apiUrl('/api/site'))
@@ -2099,7 +2101,13 @@ function renderManagedSites(){
       +'<button class="mini arrow" title="'+t('上移')+'" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
       +'<button class="mini arrow" title="'+t('下移')+'" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
       +'<button class="mini danger" onclick="deleteSiteByIdx('+i+')">'+t('删除')+'</button>'
-      +'</div></div></div>';
+      +'</div></div>'
+      +'<div class="code-box" style="margin-top:10px">'
+      +'<pre id="scode_'+i+'">'+escapeHtml(buildEmbedCode(s.site_key))+'</pre>'
+      +'<button class="mini" onclick="copyText(\'scode_'+i+'\')">'+t('复制埋点代码')+'</button>'
+      +(s.site_key ? '' : '<button class="mini" onclick="regenSiteKey('+i+')">'+t('启用令牌')+'</button>')
+      +'<button class="mini" onclick="regenSiteKey('+i+')">'+t('重新生成令牌')+'</button>'
+      +'</div></div>';
   }
   el.innerHTML=h;
 }
@@ -2110,6 +2118,25 @@ function moveSite(idx, delta){
   renderManagedSites(); saveSiteOrder();
 }
 function deleteSiteByIdx(i){ if(managedSites[i]) deleteSite(managedSites[i].site); }
+function regenSiteKey(idx){
+  var s = managedSites[idx];
+  if(!s) return;
+  if(!confirm(t('确定重新生成「{n}」的部署令牌？\n生成后须用新代码重新嵌入该站点，旧令牌立即失效。', s.site))) return;
+  fetch(apiUrl('/api/site/key'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({site:s.site})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){
+        var i = managedSites.findIndex(function(x){ return x.site===res.site; });
+        if(i>=0) managedSites[i].site_key = res.site_key;
+        renderManagedSites();
+        setTip(t('已重新生成「{n}」的部署令牌，请用新代码重新嵌入。', res.site));
+      } else {
+        setTip(t('生成失败：')+(res.error||t('未知错误')), true);
+      }
+    }); })
+    .catch(function(e){ setTip(t('生成失败：')+e, true); });
+}
 var _siteDragFrom=-1;
 function siteDragStart(e,i){ _siteDragFrom=i; try{ e.dataTransfer.effectAllowed='move'; }catch(_){} var it=e.currentTarget; if(it) it.classList.add('dragging'); }
 function siteDragOver(e,i){ e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} }
