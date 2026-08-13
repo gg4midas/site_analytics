@@ -5,6 +5,8 @@
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-%E2%9C%93-brightgreen.svg)]()
 [![Privacy-friendly](https://img.shields.io/badge/Privacy--friendly-%E2%9C%93-brightgreen.svg)]()
 
+> 英文文档：[README_EN.md](README_EN.md)
+
 轻量、自托管、隐私友好的网站访问分析工具。**基于前端埋点，不依赖任何访问日志。**
 
 通过在被统计的网页中嵌入一段极轻量的 JS（`tracker.js`），由**真实访客的浏览器**主动上报访问事件。

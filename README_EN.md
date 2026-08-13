@@ -1,0 +1,528 @@
+# Site Analytics
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.7%2B-blue.svg)](https://www.python.org)
+[![Self-hosted](https://img.shields.io/badge/Self--hosted-%E2%9C%93-brightgreen.svg)]()
+[![Privacy-friendly](https://img.shields.io/badge/Privacy--friendly-%E2%9C%93-brightgreen.svg)]()
+
+> 中文文档：[README.md](README.md)
+
+A lightweight, self-hosted, privacy-friendly website analytics tool. **Based on front-end instrumentation — it does not depend on any access logs.**
+
+By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, **real visitors' browsers** actively report visit events. Compared to parsing Nginx/Apache access logs, this approach naturally avoids machine-traffic noise such as crawlers, monitors, CDN origins, and health checks, delivering a higher signal-to-noise ratio and metrics logs cannot provide (true time-on-site, bounce rate, SPA routing, normalized device/browser dimensions, etc.).
+
+- **Zero required third-party dependencies**: The back end runs using only the Python standard library (`http.server`); charts use a local ECharts build — no network needed, no database service required.
+- **Self-hosted**: Data lives in a SQLite file on your own server and never passes through any third party.
+- **Optional enhancement**: GeoIP geographic distribution (`maxminddb` + GeoLite2, freely optional — auto-disabled when missing, without affecting other features).
+
+---
+
+## Version History
+
+### v1.3.8 (2026-08-13)
+- **Console quick commands**: Added two items to the panel menu — `6: Health Check` and `7: View Logs`. Health Check covers process / port listening / HTTP probe (connects directly to `127.0.0.1:$PORT`, unaffected by reverse proxy) / data-directory writability; View Logs prints the last 40 lines of `run.log`. This version has been committed and released, so after upgrading from an older version these two items are retained and are no longer overwritten/lost by an older tarball.
+
+### v1.3.7 (2026-08-13)
+- **Performance panel**: Added a collapsible "Performance Data Accuracy Notes" hint (collapsed by default, expand on click). It explains that FCP/LCP/TTFB/CLS are real-visitor measurements (RUM) with the overall figure taken at the P75 percentile; **Speed Index is a synthetic estimate, not a Lighthouse measurement, with a deviation of about ±30%~50% — do not interpret it as an absolute value**; TTFB excludes connect/TLS/redirect (systematically low); LCP/CLS may be low for short-visit sessions; the header P75 and per-page/per-device averages use different statistical bases.
+- **No user-management note**: Added "Why there is no built-in user-management system" — this tool is positioned as self-hosted personal use; access control is handled by the deployment layer (reverse-proxy basic auth / internal-network isolation) or an already-existing website-level account. For multi-user scenarios, we recommend adding authentication on Nginx/Caddy, or extending the account system on top of `--token`.
+- **Deploy package**: Rebuilt `site_analytics_final.zip` (v1.3.7, 19 files, sensitive/obsolete files excluded).
+
+---
+
+## Features
+
+- **Real-visitor metrics**: PV, unique visitors (UV), sessions, bounce rate, average time on site, pages per visitor.
+- **Dimension analysis**: Top pages, referrer domains, device distribution, browser distribution, OS distribution, screen resolution.
+- **Real-time monitoring**: Recent visitor flow, dashboard polls and refreshes every 5 seconds.
+- **Visitor geography (optional)**: Country / region distribution + city TOP, with flags; can also identify ISP/operator (ASN).
+- **Time ranges**: Last 1 day / 7 days / 30 days, aggregated by day.
+- **Site management**: Manually add sites from the panel; auto-generates the instrumentation snippet pre-filled with `data-site`, one-click copy; supports deregistering (preserves already-collected events).
+- **SQLite event storage**, aggregated queries by day, single file easy to back up.
+- **Public reporting endpoint** (`/api/event`, CORS open); dashboard and query APIs have **optional token auth (off by default, not required)**.
+- **Anti-fraud**: Automatically filters `navigator.webdriver` and known crawler UAs.
+- **Reverse-proxy friendly**: Restores the real visitor IP via `X-Forwarded-For` / `X-Real-IP`.
+
+---
+
+## Dashboard Tour (Feature Modules)
+
+The analytics dashboard (`index.html`) is a single-page console. The top bar lets you switch **Chinese / EN** language, toggle dark / light theme, and manually refresh. It contains the following modules:
+
+| Module | Content |
+|--------|---------|
+| Overview | Core KPIs: PV / UV / sessions / bounce rate / avg. time on site, visit trend, visit depth, new vs. returning visitors, device distribution |
+| Visitors | Visitor details (source, device/browser, ISP, region, time on site, last active), potential leads and suspected bot / data-collection flags |
+| Content | Top pages, top landing pages, top exit pages, top pages by avg. time on site |
+| Performance | Front-end performance samples (FCP / LCP / TTFB / CLS / Speed Index) |
+| Sources | Source-type distribution, top source domains |
+| Geography | World map + country/region ranking + city TOP (requires GeoIP enabled) |
+| Real-time | Visitor flow for last 5 / 10 / 30 minutes, polls every 5 seconds |
+| Site Management | Add/remove sites, generate snippet, set data-retention period, manage blocked visitors |
+
+
+<img width="1920" height="919" alt="illustration_sa_dashboard" src="https://github.com/user-attachments/assets/4dc90907-2358-4edc-88d3-67ee247533c3" />
+
+---
+
+## How It Works
+
+```
+ Visitor browser             Your server                      Data
+┌─────────────┐   load/report  ┌──────────────────┐        ┌──────────┐
+│ Tracked page │ ────────────▶ │  tracker.js       │        │          │
+│ (any site)   │ ◀──────────── │  app.py (8899)    │ ─────▶ │ SQLite   │
+└─────────────┘   return script│  event collect+agg│  write  │ events.db│
+                              │  + dashboard html  │        │          │
+                              └──────────────────┘        └──────────┘
+                                     ▲
+                              dashboard browser (view charts)
+```
+
+1. You embed `tracker.js` (one `<script>`) into every page of the target site.
+2. When a visitor opens a page, the browser loads `tracker.js` and reports the visit to `/api/event` (time on site is reported when the page is hidden).
+3. `app.py` receives the event and writes it to `data/events.db`, grouped by site (`data-site`).
+4. You view the aggregated charts via the dashboard (`index.html`); the dashboard and the reporting endpoint can sit behind a reverse proxy.
+
+> **Why not parse logs?** Logs are filled with non-human traffic (crawlers, monitors, CDN origins, health checks) and cannot capture client-side behavior such as time on site or bounce rate. Front-end instrumentation counts only real browser executions — cleaner and more accurate.
+
+---
+
+## Directory Structure
+
+```
+site_analytics/
+├── app.py                  # Back end: event collection + aggregation + dashboard + tracker.js (single file)
+├── tracker.js              # Front-end instrumentation script (embed into tracked pages)
+├── index.html              # Analytics dashboard (local ECharts, dark style)
+├── tracker-loader.html     # Optional "inline loader" snippet (for sites with heavy cache/optimization plugins)
+├── nginx_bypass_auth.conf  # Two-location reverse-proxy config example (generic Nginx)
+├── static/
+│   └── echarts.min.js      # Local chart library (bundled, no network needed)
+├── start.sh                # Start script (runs in background, writes run.log)
+├── restart.sh              # Restart script
+├── sa-console.sh           # Server management console: start/stop/restart/version-check-upgrade/one-click rollback
+├── site_analytics.service  # systemd unit example
+├── update_geoip.sh         # Download / update GeoLite2 databases (City + ASN)
+├── geoip/                  # Runtime location for GeoLite2-*.mmdb (download yourself, not in repo)
+└── data/                   # Generated at runtime: events.db + run.log / debug.log
+```
+
+> The `.mmdb` databases under `geoip/` are ~130MB and excluded via `.gitignore` (not in the repo). After cloning, fetch them with `update_geoip.sh`.
+
+---
+
+## Requirements
+
+| Component | Requirement | Notes |
+|-----------|-------------|-------|
+| Python | **3.7+** (3.10+ recommended) | Core features run on the standard library only |
+| Third-party libs | **None (core)** | No `pip install` needed |
+| `maxminddb` | Optional | Only needed when enabling GeoIP: `pip install maxminddb` |
+| Web server | Optional (recommended for prod) | Any of Nginx / Caddy / Apache, for reverse proxy + HTTPS |
+| OS | Linux / macOS / Windows | Self-hosting is mostly on Linux servers |
+
+> This project does **not** depend on Node.js, an external database (MySQL/PostgreSQL, etc.), or any cloud service.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Get the code
+git clone https://github.com/gg4midas/site_analytics.git
+cd site_analytics
+
+# If GitHub is slow in your region, use the Gitee mirror (synced with GitHub):
+git clone https://gitee.com/operations-go_0/site_analytics.git
+
+# 2. Start (listens on 127.0.0.1:8899 by default, no token, no third-party libs)
+python3 app.py
+
+# 3. Open the dashboard in a browser
+#    http://localhost:8899/
+```
+
+After the dashboard starts, embed the snippet (see "Embed the Snippet" below) into the site you want to track; data will appear automatically once visitors arrive.
+
+> To customize the port / listen address / token / data directory, see "Configuration".
+
+---
+
+## Configuration
+
+All parameters are passed on the command line — there is no config file:
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `--host` | `127.0.0.1` | Listen address. In production keep `127.0.0.1` and expose via reverse proxy; set `0.0.0.0` to expose publicly (not recommended). |
+| `--port` | `8899` | Listen port. |
+| `--token` | empty (no auth) | Optional access token for the dashboard and query APIs. Empty = fully open; when set, the dashboard requires `?token=xxx`. |
+| `--data-dir` | `./data` | Data storage directory (holds `events.db`, logs). Can point to another disk/mount. |
+| `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP city database path. Geographic features auto-disable if the file is absent. |
+| `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN database path, used to identify the visitor's ISP. |
+
+Examples:
+
+```bash
+# Localhost only, custom port, no auth (most common with reverse proxy + access control)
+python3 app.py --host 127.0.0.1 --port 8899
+
+# Add an independent token to protect the dashboard
+python3 app.py --host 127.0.0.1 --port 8899 --token YOUR_TOKEN
+
+# Store data on a separate mount and enable the geo database
+python3 app.py --data-dir /var/lib/site_analytics --geoip-db /opt/geo/GeoLite2-City.mmdb
+```
+
+> **About the token**: It is not required. When `--token` is omitted, the dashboard and all query APIs are fully open — anyone who knows the address can access them.
+> If your analytics domain already has access control (basic auth / known only to you / internal network), you can skip the token entirely.
+> Pass `--token` only when you want an extra independent password layer on the dashboard.
+
+> **Why there is no built-in user-management system**: This project is positioned as a self-hosted personal-use tool; access control is delegated to the deployment layer — for example a reverse proxy's basic auth, internal-network isolation, or reusing the website's existing login system. In-app account registration / login / multi-tenant isolation is not implemented.
+> For multi-user scenarios, we recommend adding authentication on the reverse proxy (Nginx / Caddy), or extending the account system on top of `--token`. A full user-management module is an optional enhancement, outside the scope of the current version.
+
+---
+
+## Deploy to Production
+
+### 1) Run in background / start scripts
+
+The repo ships `start.sh` / `restart.sh`, which auto-`cd` to their own directory and start in the background via `nohup`, writing logs to `run.log`:
+
+```bash
+bash start.sh                       # default port 8899, no token
+PORT=8899 TOKEN=YOUR_TOKEN bash start.sh
+bash start.sh --port 8899 --token YOUR_TOKEN
+
+bash restart.sh                    # frees the port before restarting
+```
+
+### 2) systemd service (recommended for Linux servers)
+
+Copy the example unit to the system directory and enable boot-time start:
+
+```bash
+sudo cp site_analytics.service /etc/systemd/system/
+sudo nano /etc/systemd/system/site_analytics.service   # edit WorkingDirectory and ExecStart paths/token
+sudo systemctl daemon-reload
+sudo systemctl enable --now site_analytics
+```
+
+Key lines in the unit file (default example):
+
+```
+WorkingDirectory=/opt/site_analytics
+ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899 --token YOUR_TOKEN
+```
+
+> After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path; remove the `--token` segment if you do not use a token.
+
+### 3) Reverse proxy (generic, not bound to any panel)
+
+In production, **do not** expose port `8899` directly to the public internet. The standard approach: the back end listens on `127.0.0.1`, and a web server (Nginx / Caddy / Apache) reverse-proxies it to a dedicated domain with HTTPS. Panels such as aaPanel, 1Panel, and cPanel are essentially GUI shells over these web servers — paste the corresponding `location` block into the site config; no panel-specific steps are needed.
+
+Below is **Nginx** (full `server` block, with TLS, public reporting path, optional dashboard protection, and real-IP passthrough):
+
+```nginx
+server {
+    listen 80;
+    server_name analytics.example.com;   # change to your analytics domain
+
+    # ---- MUST be public: the tracking script, loaded by every visitor's browser ----
+    location = /tracker.js {
+        proxy_pass http://127.0.0.1:8899;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ---- MUST be public: the event-reporting endpoint, allow POST/GET or stats break ----
+    location /api/event {
+        proxy_pass http://127.0.0.1:8899;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 256k;       # reports are mostly sendBeacon/fetch, relax size limit
+    }
+
+    # ---- Rest of the dashboard: optionally add basic-auth protection (or use --token) ----
+    location / {
+        proxy_pass http://127.0.0.1:8899;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # To protect the dashboard with basic auth, uncomment the two lines below
+        # and pre-generate the password file with `htpasswd`
+        # auth_basic "Restricted";
+        # auth_basic_user_file /etc/nginx/conf.d/analytics.htpasswd;
+    }
+}
+```
+
+> These three `location` blocks are also provided separately in `nginx_bypass_auth.conf` for direct copy-paste.
+> In any panel: open the site "Settings / config file", paste these two blocks (tracker.js and /api/event) inside `server { … }`; the rest of the paths keep the panel's existing access control.
+
+**Caddy (automatic HTTPS, simplest):**
+
+```caddyfile
+analytics.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:8899
+}
+```
+
+**Apache (inside `<VirtualHost>`):**
+
+```apache
+ProxyPass        /tracker.js http://127.0.0.1:8899/tracker.js
+ProxyPass        /api/event  http://127.0.0.1:8899/api/event
+ProxyPass        /           http://127.0.0.1:8899/
+ProxyPreserveHost On
+RemoteIPHeader   X-Forwarded-For
+```
+
+### 4) Real-IP passthrough (prerequisite for GeoIP / accurate stats)
+
+Geographic distribution and accurate source stats depend on the visitor's real IP. Behind a reverse proxy, the back end by default sees `127.0.0.1` as the source IP, so the proxy **must** carry `X-Forwarded-For` / `X-Real-IP` (all examples above include them).
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+Internal / local IPs show as "(internal/local)" on the geo map — this is normal.
+
+---
+
+## Service Management Console (sa-console.sh, server ops)
+
+Once deployed to a server, the bundled console uniformly manages start/stop and upgrades — no need to memorize commands.
+
+### Install and symlink
+
+```bash
+# Place sa-console.sh in the install dir (e.g. /opt/site_analytics) and make it executable
+chmod +x sa-console.sh
+# Optional: symlink into PATH so `sa-console` works from any directory
+ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
+```
+
+### Interactive menu
+
+```text
+=========== site_analytics service console ===========
+ 1: Check for updates (upgrade)
+ 2: Roll back to an older version
+ 3: Start service
+ 4: Stop service
+ 5: Restart service
+ 0: Exit
+======================================================
+```
+
+- **1 Check for updates**: Reads `VERSION` in `app.py` and compares against the **latest Release** online (GitHub by default; if a mirror source is configured, it reads from the mirror instead). If a newer version is found, after confirmation it auto-downloads the corresponding tarball, overwrites, and restarts (preserving the `data/` database and local config).
+- **2 Roll back to an older version**: Lists **all published Releases** (GitHub by default; from the mirror if configured). Pick one to roll the code back to that version (also preserving `data/` and local config, then restarting). Use this to quickly revert to the previous stable version when an upgrade goes wrong.
+- **3 Start / 4 Stop / 5 Restart**: Works with both "nohup + start.sh" and "systemd service" run modes; locates the process by listen port so status is accurate.
+
+### Domestic mirror (Gitee / self-hosted, optional)
+
+GitHub's source packages live at `codeload.github.com`, a domain often blocked or timed-out in some regions, causing "upgrade / rollback" downloads to fail. The console supports a **mirror source**: both downloads and the version list prefer the mirror. The easiest option is to use **Gitee** as the mirror:
+
+1. When creating a new Gitee repo, choose "Import existing repository" and paste the GitHub URL; set the repo to **public**, then push the `main` branch and all `vX.Y.Z` tags (`git push --tags`).
+2. On the domestic server, bootstrap the new console once (Gitee raw files are usually reachable domestically):
+   ```bash
+   cd /your/install/dir
+   curl -fsSL https://gitee.com/operations-go_0/site_analytics/raw/main/sa-console.sh -o sa-console.sh
+   chmod +x sa-console.sh
+   ```
+3. Write the mirror address into the install dir's `.update_mirror` (persistent, one URL per line):
+   ```bash
+   echo 'https://gitee.com/operations-go_0/site_analytics/repository/archive/{tag}.tar.gz' > /your/install/dir/.update_mirror
+   ```
+
+After that, the console's "upgrade / rollback" fully uses Gitee and depends on GitHub no more.
+
+> You can also skip the file and use an env var temporarily: `SA_UPDATE_MIRROR='https://gitee.com/operations-go_0/site_analytics/repository/archive/{tag}.tar.gz' sa-console update`.
+> The mirror address supports a `{tag}` placeholder (auto-replaced with the version); a directory-style mirror is written as a base URL (the console builds `<base>/<tag>.tar.gz` and additionally reads `<base>/versions.json` as the version manifest).
+
+### Self-hosted mirror generator (make_mirror.sh, optional)
+
+If you have no ready-made Gitee repo and want a fully self-hosted mirror, the repo ships `make_mirror.sh`: run it once on a machine that **can reach GitHub directly** (usually an overseas server) to pull each Release's tarball, `versions.json`, and the latest `sa-console.sh` into a local directory. Then expose that directory via a web server / object storage + CDN as an https URL, and point the domestic server's `.update_mirror` at it.
+
+```bash
+SA_UPDATE_MIRROR_OUT=/var/www/site_analytics-mirror bash make_mirror.sh
+# Without OUT it defaults to ./site_analytics-mirror
+```
+
+Then expose the output directory as https (e.g. `https://<your-domain>/site_analytics-mirror/`), and on the domestic server run `echo 'https://<your-domain>/site_analytics-mirror' > /install/dir/.update_mirror`; upgrade / rollback then use your own mirror.
+
+### Single commands (for scripts / monitoring)
+
+```bash
+sa-console start | stop | restart | status | update
+sa-console rollback <tag>          # e.g. sa-console rollback v1.2.0
+```
+
+> Version management is based on **GitHub Releases (or an equivalent Gitee mirror)**: publish a Release with a `vX.Y.Z` tag on GitHub first, then the console can check / upgrade / roll back; if a domestic mirror is configured (`SA_UPDATE_MIRROR` or the install dir's `.update_mirror`), it reads the version list and download package from the mirror instead. The current version is recorded in the `VERSION` constant in `app.py` (change it when releasing; the console auto-compares and prompts to upgrade).
+
+---
+
+## Embed the Snippet
+
+Place the following line before `</body>` on every page (or in the site-wide template):
+
+```html
+<script src="https://your-analytics-domain.com/tracker.js" data-site="example.com" defer></script>
+```
+
+- **`data-site`**: Site identifier (domain recommended); the dashboard groups by it. When omitted, it auto-takes the current `location.hostname`.
+- **Cross-origin**: The script is hosted on your analytics domain and reports to the same-domain `/api/event`; CORS is open, no extra config needed.
+- **`data-respect-dnt="true"`** (optional): Respect the browser's "Do Not Track" setting; visitors with DNT on will not be reported when enabled.
+- **`data-endpoint="https://your-analytics-domain.com/api/event"`** (optional): Explicitly specify the reporting address, preventing miscalculation if the script is accidentally altered.
+- **SPA / front-end routing**: `tracker.js` listens for `pushState` / `popstate`; single-page-app route changes auto-report under the new path, no manual call needed.
+
+### Auto-generate the snippet from the dashboard (recommended)
+
+Don't want to type it by hand? Click **"+ Add Site"** in the top bar of the dashboard, enter the domain to monitor (e.g. `example.com`, with an optional label), and after submitting the snippet for that site is listed automatically — click "Copy" and paste it before `</body>` on the target site. **No backend restart needed**; the new site appears in the top dropdown immediately.
+- **Multilingual / subdomain sites (e.g. WPML)**: Just enter the **main domain** in "+ Add Site" (without `www`, e.g. `example.com`). Paste the same universal deployment snippet into all language subdomains (`www` / `de` / `fr`, etc.); the tracker auto-reports by each subdomain's `location.hostname`, and the back end auto-merges them under the main domain for unified monitoring and per-language differentiation. **Do not** add a separate site for each subdomain, and **do not** add a `www.` prefix.
+
+### Sites with heavy cache / optimization plugins (optional)
+
+If the target site uses aggressive caching or "Delay JS / Combine JS" style optimization plugins, it may block the external `tracker.js`. In that case, use the **inline loader** from `tracker-loader.html` instead of the `<script src>` above: it is an inline script that dynamically injects `tracker.js` at runtime, letting it "hide" during the plugin output phase and thus avoid localization / combination. This loader works for **any CMS (WordPress / DedeCMS / custom sites, etc.)**, not just WordPress.
+
+---
+
+## Enable Visitor Geography (GeoIP, optional)
+
+Geographic distribution depends on the MaxMind GeoLite2 database and is **disabled by default** (does not affect other features).
+
+1. **Install the parsing library** (once, on the server):
+   ```bash
+   pip install maxminddb        # pure-Python parser, no compilation
+   ```
+2. **Get the free database** (either one):
+   - **MaxMind GeoLite2** (CC BY-SA 4.0, free for non-commercial): register at https://www.maxmind.com/ → My Account → Generate License Key.
+   - **db-ip free database** (no key, no registration): just use the `--dbip` flag, see next step.
+3. **Download and update** (script unzips into `geoip/`):
+   ```bash
+   GEOIP_LICENSE_KEY=YOUR_KEY ./update_geoip.sh
+   # or: ./update_geoip.sh YOUR_KEY
+   # key-free db-ip source:
+   ./update_geoip.sh --dbip
+   ```
+4. **Restart the backend**; when startup shows `GeoIP: enabled (...)` it is active:
+   ```bash
+   python3 app.py --host 127.0.0.1 --port 8899 --geoip-db geoip/GeoLite2-City.mmdb --asn-db geoip/GeoLite2-ASN.mmdb
+   ```
+   If `--geoip-db` is omitted, `geoip/GeoLite2-City.mmdb` is read by default.
+5. The dashboard's "Geography" tab now shows the country / region ranking (with flags) and city TOP.
+
+> The database updates roughly every 1–2 months; re-run `update_geoip.sh` then **restart the backend** (the GeoIP reader loads at startup).
+
+---
+
+## API Reference
+
+| Endpoint | Auth | Notes |
+|----------|------|-------|
+| `GET  /tracker.js` | none | Returns the tracking script |
+| `POST/GET /api/event` | none | Receives reported events (JSON / form / image beacon) |
+| `GET  /api/sites` | token* | Site list (manual registration ∪ event-discovered, deduplicated) |
+| `GET  /api/stats?site=&days=` | token* | Aggregated stats |
+| `GET  /api/recent?site=&limit=` | token* | Recent events (real-time monitoring) |
+| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | token* | Visitor details (with suspect / inquiry counts; filterable by source, referrer domain, inquiry) |
+| `GET  /api/months?site=` | token* | List of months with data for the site (dashboard month switch) |
+| `GET  /api/site` | token* | Manually registered sites and labels |
+| `POST /api/site` | token* | Add site `{"site","label"}` |
+| `DELETE /api/site?site=` | token* | Remove site registration |
+
+> `token*`: validated only when the backend was started with `--token`; if no token is set, everything is open (same as other query APIs).
+
+---
+
+## Metric Definitions
+
+- **Bounce rate**: sessions with only 1 pageview / total sessions.
+- **Average time on site**: per-session sum of time-on-site reported via `pagehide`, then averaged (sessions that closed too fast to trigger reporting are excluded).
+- **Unique visitors (UV)**: based on the visitor ID assigned by the tracker (`localStorage`, ~1 year validity), **not IP**, so it is unaffected by NAT / shared egress IP and closer to the real headcount.
+- **Session**: partitioned by visitor ID + active window (a session ends after 30 minutes of no new event by default).
+- **Page performance (Core Web Vitals) accuracy notes**:
+  - **FCP / LCP / TTFB / CLS are Real-User Measurements (RUM)**: the header summary uses the interval **P75 (75th percentile)**, consistent with Google PageSpeed Insights' field data; accuracy depends on sample size (the "samples" count `perf_count` at the top-right of the panel) — the smaller the sample, the wider the P75 confidence interval; base conclusions on data over a sufficiently long traffic period.
+  - **Speed Index is a synthetic estimate**: browsers cannot capture frame-by-frame screenshots, so this project constructs a "visual completeness curve" integrating FCP / LCP / TTFB to derive it. It is **NOT a Lighthouse-measured Speed Index** and is for trend reference only — do not interpret it as an absolute value (deviation from the true value can reach ±30%~50% and is not calibratable). The UI already labels this item "(est.)".
+  - **Basis-deviation notes**: TTFB covers only `responseStart − requestStart`, **excluding** connect / TLS / redirect time, so it runs smaller than standard TTFB; LCP / CLS may be **low** when a visitor leaves early (final report not triggered); older browsers / some Safari do not support the relevant Performance API, and such samples are auto-discarded, so the overall sample skews toward Chromium kernels.
+  - **Header P75 vs. per-page / per-device averages use different bases**: the header summary is P75, while the "per-page / per-device" detail tables are **arithmetic means** — different statistical bases, so the numbers are not directly comparable across them.
+
+---
+
+## Anomalous-Traffic Flagging and Soft-Blocking
+
+To improve the signal-to-noise ratio, the dashboard auto-flags suspected non-real visitors and supports **lossless soft-blocking** (raw events are kept and recoverable).
+
+### ISP (operator) identification
+Based on the GeoLite2-ASN library (requires `maxminddb` installed and `geoip/GeoLite2-ASN.mmdb` present); the server resolves the ISP from the visitor IP. Internal / local IPs show "(internal/local)"; if the ASN library is missing, the column is left blank without error.
+
+### Suspected-anomalous-visitor flags (flagged if any condition is met)
+- **Datacenter / cloud-host / crawler-hosting ISP**: the ISP hits a known AS number or org-name keyword (AWS, Google Cloud, Azure, Alibaba Cloud, Tencent Cloud, Huawei Cloud, Baidu, Cloudflare, OVH, Vultr, Hetzner, Datacamp, M247, Leaseweb, etc.; Starlink and similar residential satellite networks are deliberately excluded to avoid hurting real users). Shown as a purple "Suspected data collection" badge.
+- **Single-visitor pageview anomaly**: a visitor's PV ≥ 8 × the median PV of all visitors, and ≥ 30, and the sample has ≥ 5 visitors. Shown as an orange "Abnormally high pageviews" badge.
+- The two conditions are an "OR" relationship and can co-exist; the top of the visitor page counts them separately (`suspect_dc_count` / `suspect_highpv_count`).
+
+> Flagging depends on ISP resolution; ensure the ASN library is deployed and updated regularly (`bash update_geoip.sh`), and that the reverse proxy passes through the real visitor IP (see "Real-IP passthrough"). If placed behind a proxy that hides the real IP, all traffic will be misjudged as a datacenter network.
+
+### Soft-blocking (exclude only, recoverable)
+Click "Exclude" on a visitor in the Visitors / Real-time table to add them to `blocked_visitors`. All stats auto-exclude their data via the database view `visible_events`, but the **raw events are fully retained** and can be restored anytime via "Site Management → Blocked Visitors → Restore". Stats read through the view while reporting / deletion operate on the base `events` table, so blocking loses no raw data and is fully reversible.
+
+---
+
+## Privacy and Compliance
+
+- Does not collect form content, does not collect precise GPS coordinates.
+- With GeoIP enabled, only resolves the visitor IP to a **country / city level** approximate location (from the local MaxMind database, **uploaded to no third party**), used for geographic distribution; raw IP is not stored.
+- The visitor ID is randomly generated and not tied to a personal identity.
+- If you need to satisfy the notification obligations of GDPR / PIPL etc., state in your site's privacy policy that this analytics tool is used.
+
+---
+
+## FAQ / Troubleshooting
+
+- **No sites on the dashboard**: Confirm `tracker.js` is embedded on the target site and there is real traffic; check F12 → Network for a `/api/event` request (should be 204).
+- **Events not in the database**: Check `data/run.log` or `data/debug.log`; confirm the reporting UA was not misjudged as a crawler (a normal browser won't be).
+- **Charts not showing**: Confirm `static/echarts.min.js` exists and is reachable.
+- **Geography empty**: GeoIP not enabled — confirm `pip install maxminddb`, the `.mmdb` downloaded, and the backend restarted.
+- **All visitors show the same IP / internal**: The reverse proxy is not passing `X-Forwarded-For`; see "Real-IP passthrough".
+- **Port in use**: `sa-console restart` auto-locates and frees the process by port; or `bash restart.sh`, or `lsof -i :8899` / `fuser -k 8899/tcp` then restart.
+
+### Data stops on a certain day, no new data after
+If the dashboard data stops on a certain day (e.g. only 7/9, 7/10), it means the tracker stopped reporting successfully afterward. Troubleshoot in order:
+
+1. **Confirm the deployment code is the "universal deployment snippet" and is active**: In the WP admin, confirm the dynamic-injection loader (starting with `<script>(function(){...`) exists before `</head>`, not the old direct `<script src=.../tracker.js>`. The old way is easily localized and broken by cache plugins.
+2. **Clear cache**: Go to the WP cache plugin (WP Rocket / Autoptimize / W3TC, etc.) and click "Clear Cache" to avoid the browser / server returning stale pages and scripts.
+3. **Verify reporting in debug mode**: Add `data-debug="true"` to the loader tag, open the browser console (F12 → Console); normally you should see:
+   ```
+   [tracker] site=de.example.com endpoint=https://your-analytics-domain.com/api/event
+   [tracker] POST status 200
+   ```
+   If `fetch failed` or it is blocked by CSP / network, check whether the analytics domain is publicly reachable and whether there are cross-origin / firewall restrictions.
+4. **Confirm the analytics service is running**: `curl -I http://127.0.0.1:8899/` should return 200; `ps aux | grep app.py` confirms the process is alive (or use `sa-console status`).
+5. After ruling out the above, a gap is mostly a period with no real visits or the tracker not yet deployed then — normal. New visits enter the dashboard in real time after you re-deploy and clear the cache.
+
+> Multilingual (WPML) subdomains: just enter the **main domain** in "+ Add Site" (without `www`, e.g. `example.com`), paste the same snippet into `www` / `de` / `fr` etc. subdomains; the tracker auto-reports and merges by `location.hostname`. Do not add a separate site per subdomain.
+
+---
+
+## Contributing
+
+Issues and Pull Requests are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+- Local development and running **only require the Python standard library** — no extra environment; `pip install maxminddb` is needed only when enabling GeoIP.
+- Before submitting, confirm `python3 app.py` starts normally and the dashboard opens.
+- Keep code style consistent with the existing single-file `app.py` / `index.html` (zero external dependencies preferred).
+
+---
+
+## License
+
+This project is open-sourced under the [MIT License](LICENSE) — free to use, modify, and distribute, but **provided without warranty**, and the author is not liable for any consequences of use. Please retain the copyright and license notices when distributing.
