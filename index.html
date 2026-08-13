@@ -560,7 +560,7 @@ var I18N_EN = {
 '次数':'Count',
 '页面 URL':'Page URL','平均停留':'Avg. Dwell','访问次数':'Views',
 '当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）':'No performance samples this period (requires real visitor browsers to report metrics)',
-'FCP':'FCP','LCP':'LCP','TTFB':'TTFB','CLS':'CLS','Speed Index':'Speed Index',
+'FCP':'FCP','LCP':'LCP','TTFB':'TTFB','CLS':'CLS','Speed Index':'Speed Index','Speed Index (估算)':'Speed Index (est.)',
 '采样':'Samples',
 '全部':'All','桌面':'Desktop','手机':'Mobile','平板':'Tablet',
 '设备':'Device','状态':'Status',
@@ -1304,13 +1304,13 @@ function renderPerfSummary(d){
     cell('LCP', o.lcp||0, 's', 2.5, 4) +
     cell('TTFB', o.ttfb||0, 's', 0.8, 1.8) +
     cell('CLS', o.cls||0, '', 0.1, 0.25) +
-    cell('Speed Index', o.speed_index||0, 's', 3.4, 5.8);
+    cell(t('Speed Index (估算)'), o.speed_index||0, 's', 3.4, 5.8);
 }
 
 function renderPerfTable(rows){
   var el=document.getElementById('tblPerf'); if(!el) return;
   if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
-  var h='<thead><tr><th>'+t('页面 URL')+'</th><th class="right">'+t('采样')+'</th><th class="right">FCP</th><th class="right">LCP</th><th class="right">TTFB</th><th class="right">CLS</th><th class="right">Speed Index</th></tr></thead><tbody>';
+  var h='<thead><tr><th>'+t('页面 URL')+'</th><th class="right">'+t('采样')+'</th><th class="right">FCP</th><th class="right">LCP</th><th class="right">TTFB</th><th class="right">CLS</th><th class="right">'+t('Speed Index (估算)')+'</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var r=rows[i];
     var sp = (r.site && r.site !== currentSite) ? r.site : '';

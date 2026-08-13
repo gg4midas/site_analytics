@@ -442,6 +442,11 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 - **平均停留**：按会话汇总 `pagehide` 上报的停留时长后取均值（关闭过快未触发上报的会话不计入）。
 - **独立访客（UV）**：基于埋点分配的访客 ID（`localStorage`，约 1 年有效期），**非 IP**，因此不受 NAT / 共享出口 IP 影响，更接近真实人数。
 - **会话**：基于访客 ID + 活跃窗口（默认 30 分钟无新事件则会话结束）划分。
+- **页面性能（Core Web Vitals）精度说明**：
+  - **FCP / LCP / TTFB / CLS 为真实用户测量（RUM）**：头部汇总取区间 **P75（第 75 分位）**，口径与 Google PageSpeed Insights 的 field data 一致；精度取决于采样量（面板右上角「采样」数 `perf_count`），样本越小、P75 置信区间越宽，建议以足够流量周期的数据为准。
+  - **Speed Index 为合成估算值**：浏览器端无法获取逐帧截图，本项目以 FCP / LCP / TTFB 构造「视觉完成度曲线」积分得出，**并非 Lighthouse 实测 Speed Index**，仅作趋势参考，请勿当作绝对值解读（与真实值偏差可达 ±30%~50% 且不可校准）。UI 中该项已标注「(估算)」。
+  - **口径偏差提示**：TTFB 仅含 `responseStart − requestStart`，**不含**连接 / TLS / 重定向耗时，故比标准 TTFB 偏小；LCP / CLS 在访客提前离开（未触发最终上报）时可能**偏低**；老版本浏览器 / 部分 Safari 不支持相关 Performance API，相关样本会被自动丢弃，整体样本偏向 Chromium 内核。
+  - **头部 P75 与各页面 / 各设备均值口径不同**：头部汇总为 P75，而「各页面 / 各设备」明细表为**算术均值**，二者统计口径不同，数值不可直接横向比较。
 
 ---
 
