@@ -358,6 +358,10 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
     </div>
     <div class="section card">
       <div class="ct" data-i18n="页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）">页面性能 · Core Web Vitals（区间 75 分位，采集自真实访客浏览器）</div>
+      <details class="perf-note">
+        <summary data-i18n="性能数据精度说明">性能数据精度说明</summary>
+        <div class="note" data-i18n="FCP/LCP/TTFB/CLS 为真实访客浏览器测量（RUM），头部取 75 分位（p75）；采样少则波动大，请看右上「采样」数。Speed Index 为估算值，非 Lighthouse 实测，请勿作绝对值解读。TTFB 不含建连/TLS/重定向（系统性偏小）；LCP/CLS 在访客短停留时可能偏低。">FCP/LCP/TTFB/CLS 为真实访客浏览器测量（RUM），头部取 75 分位（p75）；采样少则波动大，请看右上「采样」数。Speed Index 为估算值，非 Lighthouse 实测，请勿作绝对值解读。TTFB 不含建连/TLS/重定向（系统性偏小）；LCP/CLS 在访客短停留时可能偏低。</div>
+      </details>
       <div id="perfSummary" class="perf-summary"></div>
     </div>
     <div class="section card">
@@ -562,6 +566,8 @@ var I18N_EN = {
 '当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）':'No performance samples this period (requires real visitor browsers to report metrics)',
 'FCP':'FCP','LCP':'LCP','TTFB':'TTFB','CLS':'CLS','Speed Index':'Speed Index','Speed Index (估算)':'Speed Index (est.)',
 '采样':'Samples',
+'性能数据精度说明':'Performance data accuracy',
+'FCP/LCP/TTFB/CLS 为真实访客浏览器测量（RUM），头部取 75 分位（p75）；采样少则波动大，请看右上「采样」数。Speed Index 为估算值，非 Lighthouse 实测，请勿作绝对值解读。TTFB 不含建连/TLS/重定向（系统性偏小）；LCP/CLS 在访客短停留时可能偏低。':'FCP/LCP/TTFB/CLS are real-user measurements (RUM), header uses p75; small samples fluctuate, see the Samples count. Speed Index is an estimate, not Lighthouse-measured, do not read as absolute. TTFB excludes connection/TLS/redirect (systematically low); LCP/CLS may be low for short visits.',
 '全部':'All','桌面':'Desktop','手机':'Mobile','平板':'Tablet',
 '设备':'Device','状态':'Status',
 '直接访问':'Direct',
