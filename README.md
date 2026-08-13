@@ -47,7 +47,9 @@
 | 实时监控 | 近 5 / 10 / 30 分钟访客流，每 5 秒轮询 |
 | 站点管理 | 添加/删除站点、生成埋点代码、设置数据保留期、管理被屏蔽访客 |
 
-> 截图待补充——欢迎按 [CONTRIBUTING](CONTRIBUTING.md) 认领，或本地运行后提交真实截图。
+
+<img width="1920" height="919" alt="illustration_sa_dashboard" src="https://github.com/user-attachments/assets/4dc90907-2358-4edc-88d3-67ee247533c3" />
+
 
 ---
 
