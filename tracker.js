@@ -6,6 +6,10 @@
  *      / 部署指南）：运行时创建 <script> 加载远程文件并显式带 data-endpoint，缓存插件在 HTML 输出阶段
  *      看不到外部 src，因此不会本地化，也无需在每个站点的插件里配 exclude。
  *      也可手动指定上报端点：data-endpoint="https://你的分析域名/api/event"
+ * 防盗用（可选）：服务端设 SA_DEPLOY_KEY 后，给脚本注入 data-key 即可启用部署令牌校验：
+ *   <script src="https://你的分析域名/tracker.js" data-site="example.com" data-key="你的令牌" defer></script>
+ *   令牌随每次上报带回，服务端校验通过才落库；未带/错误令牌的陌生站点上报将被拒绝。
+ *   令牌写在公开 JS 中，仅能挡「直接打 endpoint / 陌生域名盗用」这类常见滥用，并可随时轮换/吊销。
  * 说明：
  *   - 自动从当前页面读取 site（优先取脚本标签 data-site，否则用 location.hostname）
  *   - 多语言/分域名站点（如 WPML 一套代码、www/de/fr 多域名）：只须在共享模板部署一次本脚本、
@@ -30,6 +34,7 @@
 
   var tag = selfTag();
   var SITE = (tag && tag.getAttribute('data-site')) || location.hostname;
+  var DEPLOY_KEY = (tag && tag.getAttribute('data-key')) || '';
   var ENDPOINT = (tag && tag.getAttribute('data-endpoint')) ||
                  (tag ? tag.src.split('/tracker')[0] : location.origin) + '/api/event';
   var RESPECT_DNT = !!(tag && tag.getAttribute('data-respect-dnt') === 'true');
@@ -110,6 +115,7 @@
     ev.ua = navigator.userAgent;
     ev.lang = navigator.language || '';
     ev.screen = (window.screen ? (window.screen.width + 'x' + window.screen.height) : '');
+    if (DEPLOY_KEY) ev.key = DEPLOY_KEY;
     var body;
     try { body = JSON.stringify(ev); } catch (e) { return; }
     if (DEBUG) console.log('[tracker] send ->', ENDPOINT, ev);
@@ -256,5 +262,5 @@
   collectPerf();
 
   // 暴露调试接口（可选）
-  window.__ssa = { site: SITE, visitor: visitor, session: session, endpoint: ENDPOINT };
+  window.__ssa = { site: SITE, visitor: visitor, session: session, endpoint: ENDPOINT, deployKey: DEPLOY_KEY ? 'set' : 'unset' };
 })();

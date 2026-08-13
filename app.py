@@ -16,6 +16,7 @@
 - 访客地域分布（国家 / 城市，需配置 GeoLite2；缺失则自动禁用，不影响其它功能）
 - SQLite 事件存储，按天聚合
 - 公开上报端点（/api/event，CORS 开放），查询接口可选 token 鉴权
+- 部署令牌（可选）：设环境变量 SA_DEPLOY_KEY 后，tracker 须随 data-key 上报正确令牌，否则拒绝（防脚本被盗用后在高流量站点产生服务器压力；详见 README「部署令牌」）
 - 自动剔除 webdriver / 已知爬虫 UA
 - 反向代理下通过 X-Forwarded-For / X-Real-IP 还原真实访客 IP
 """
@@ -44,7 +45,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.3.8"
+VERSION = "1.3.9"
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -745,6 +746,22 @@ class StatEngine(object):
         except Exception as e:
             self._log('get_sites ERROR: %s' % e)
             return []
+
+    def site_known(self, site):
+        """判断站点是否为已登记/已有历史数据的已知站点（部署令牌「宽松模式」用）。
+        命中即视为可信、无需令牌即可上报，保证现有监控平滑对接。"""
+        if not site:
+            return False
+        try:
+            conn = self._conn()
+            row = conn.execute("SELECT 1 FROM sites WHERE site=? LIMIT 1", (site,)).fetchone()
+            if row:
+                conn.close(); return True
+            row = conn.execute("SELECT 1 FROM events WHERE site=? LIMIT 1", (site,)).fetchone()
+            conn.close()
+            return bool(row)
+        except Exception:
+            return False
 
     # ---------------- 站点自定义排序 ----------------
     def get_site_order(self):
@@ -2064,9 +2081,27 @@ class StatEngine(object):
         except Exception as e:
             self._log('get_recent ERROR: %s' % e)
             return {'rows': [], 'online': 0}
+# ---------------- 部署令牌（防 tracker 盗用 / 抗压）----------------
+# 服务端通过环境变量设定令牌，tracker 通过 data-key 注入并随每次上报带回：
+#  - 未设置 SA_DEPLOY_KEY：端点完全开放（向后兼容，等同旧版行为）。
+#  - 已设置 SA_DEPLOY_KEY（默认「宽松模式」）：
+#      * 已知站点（已在 sites 表或已有历史事件的站点）：照常接收，无需令牌 —— 现有监控零中断、平滑对接。
+#      * 未知（新）站点：必须携带正确令牌，否则 403 拒绝（直接挡掉被盗用在陌生高流量域名上的情况，
+#        不产生 GeoIP/落库开销，从根本上消除服务器压力）。
+#  - 设 SA_REQUIRE_KEY=1（「严格模式」，重新嵌入带令牌的脚本后开启）：所有站点都须携带正确令牌，
+#    连已知站点被盗用上报时同样拒绝，彻底锁死。
+# 注：令牌写在公开 JS 中，仅能挡住「直接打 endpoint / 陌生域名盗用」这类最常见滥用，并支持随时轮换/吊销；
+#     对「完整盗走含令牌的 tracker.js 并原样复用」的针对性攻击无能为力（客户端无法保密），
+#     那种情况需配合反向代理层按来源 IP/域名白名单等额外手段。
+DEPLOY_KEY = (os.environ.get('SA_DEPLOY_KEY', '') or '').strip()
+REQUIRE_KEY = (os.environ.get('SA_REQUIRE_KEY', '0') or '0') == '1'
+
+
 class Handler(BaseHTTPRequestHandler):
     engine = None
     token = DEFAULT_TOKEN
+    deploy_key = ''      # 运行时由 main() 设为环境变量 SA_DEPLOY_KEY 的值
+    require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'
     www_root = None
 
     def _send_json(self, obj, code=200):
@@ -2471,6 +2506,21 @@ class Handler(BaseHTTPRequestHandler):
                     ev = {}
             ev.setdefault('ua', self.headers.get('User-Agent', ''))
             ev.setdefault('ip', self.client_ip())
+            # ---- 部署令牌（防 tracker 盗用 / 抗压）----
+            # 原理：tracker 通过 data-key 随事件带回令牌；服务端校验后再落库，
+            # 非法/陌生请求在产生任何 GeoIP/落库开销前即被 403 拒绝。
+            _site = (ev.get('site') or '').strip().lower()
+            if Handler.deploy_key:
+                _provided = (ev.get('key') or self.headers.get('X-Site-Key', '') or '').strip()
+                if Handler.require_key:
+                    # 严格模式：所有站点都必须携带正确令牌
+                    _ok = (_provided == Handler.deploy_key)
+                else:
+                    # 宽松模式：已知站点（已有数据）照常接收；未知站点必须带正确令牌
+                    _ok = self.engine.site_known(_site) or (_provided == Handler.deploy_key)
+                if not _ok:
+                    self._send_json({'status': False, 'error': 'deploy key 校验失败'}, 403)
+                    return
             ok = self.engine.add_event(ev)
             self._send_json({'status': ok}, 200 if ok else 400)
         except Exception as e:
@@ -2487,6 +2537,10 @@ def main():
     ap.add_argument('--host', default=DEFAULT_HOST, help='监听地址 (默认 127.0.0.1)')
     ap.add_argument('--port', type=int, default=DEFAULT_PORT, help='监听端口 (默认 8899)')
     ap.add_argument('--token', default=DEFAULT_TOKEN, help='面板访问令牌 (留空则不鉴权)')
+    ap.add_argument('--deploy-key', default=os.environ.get('SA_DEPLOY_KEY', ''),
+                    help='部署令牌（防 tracker 盗用）：启用后 tracker 须随 data-key 上报正确令牌，否则拒绝陌生站点')
+    ap.add_argument('--require-key', action='store_true',
+                    help='严格模式：所有站点（含已知站点）都必须携带正确部署令牌，否则拒绝（重新嵌入带令牌的脚本后开启）')
     ap.add_argument('--data-dir', default=DEFAULT_DATA_DIR, help='数据目录')
     ap.add_argument('--geoip-db', default=DEFAULT_GEO_DB, help='GeoLite2 数据库路径（缺省 geoip/GeoLite2-City.mmdb）')
     ap.add_argument('--asn-db', default=DEFAULT_ASN_DB, help='GeoLite2-ASN 数据库路径（缺省 geoip/GeoLite2-ASN.mmdb，用于识别访客运营商）')
@@ -2517,6 +2571,8 @@ def main():
         sys.stderr.write('[warn] 历史路径清洗失败：%s\n' % e)
     Handler.engine = engine
     Handler.token = args.token
+    Handler.deploy_key = (args.deploy_key or '').strip() or DEPLOY_KEY
+    Handler.require_key = bool(args.require_key) or REQUIRE_KEY
     Handler.www_root = os.path.dirname(os.path.abspath(__file__))
 
     try:

@@ -20,7 +20,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.3.8"
+CONSOLE_VER="1.3.9"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -209,6 +209,33 @@ do_health() {
   fi
   if [ -d "$DATA_DIR" ] && [ -w "$DATA_DIR" ]; then echo "数据目录 : $DATA_DIR（存在且可写）"; else echo "数据目录 : $DATA_DIR（缺失或不可写）"; ok=0; fi
   if [ "$ok" = "1" ]; then echo "结论     : 健康 ✅"; else echo "结论     : 异常 ⚠️  请结合『7: 查看日志』排查"; fi
+}
+
+do_genkey() {
+  # 生成一个随机部署令牌，并提示如何启用（防 tracker 盗用）
+  local key
+  if command -v python3 >/dev/null 2>&1; then
+    key=$(python3 -c "import secrets;print(secrets.token_urlsafe(24))" 2>/dev/null)
+  fi
+  if [ -z "$key" ]; then
+    key=$(head -c 18 /dev/urandom 2>/dev/null | base64 2>/dev/null | tr '+/' '-_' | tr -d '=' | head -c 24)
+  fi
+  [ -z "$key" ] && key="$(date +%s%N)_deploykey"
+  echo "===== 部署令牌（SA_DEPLOY_KEY）====="
+  echo "生成的令牌: $key"
+  echo ""
+  echo "启用方式（任选其一）："
+  echo "  1) 启动参数（临时）： python3 app.py --deploy-key '$key' --port 8899"
+  echo "  2) 环境变量（推荐，写入 systemd 单元 Environment=SA_DEPLOY_KEY=$key）："
+  echo "       SA_DEPLOY_KEY=$key"
+  echo ""
+  echo "然后在每个站点的埋点脚本注入 data-key："
+  echo "  <script src=\"https://你的分析域名/tracker.js\" data-site=\"example.com\" data-key=\"$key\" defer></script>"
+  echo ""
+  echo "模式说明："
+  echo "  - 默认「宽松模式」：已知站点（已有数据）照常接收，仅拦截陌生站点 —— 现有监控零中断。"
+  echo "  - 严格模式：启动加 --require-key（或 SA_REQUIRE_KEY=1），所有站点都须带正确令牌。"
+  echo "    建议：先宽松模式全站重新嵌入带 data-key 的脚本，确认无误后再开启 --require-key 彻底锁死。"
 }
 
 # ============================================================================
@@ -438,7 +465,7 @@ run_loop() {
 }
 
 # 支持「无参数」交互，或「单参数直接执行」便于脚本调用：
-#   sa-console status | start | stop | restart | update | rollback <tag>
+#   sa-console status | start | stop | restart | update | rollback <tag> | key
 case "${1:-}" in
   ""|menu) run_loop;;
   start)  do_start;;
@@ -447,6 +474,7 @@ case "${1:-}" in
   status) do_status;;
   health) do_health;;
   logs)   do_logs;;
+  key)    do_genkey;;
   update) do_update_check;;
   rollback)
     if [ -z "${2:-}" ]; then
@@ -455,5 +483,5 @@ case "${1:-}" in
       exit 1
     fi
     do_install_release "$2" "回滚到 $2";;
-  *) echo "未知命令: $1（支持: start|stop|restart|status|update|rollback <tag>）"; exit 1;;
+  *) echo "未知命令: $1（支持: start|stop|restart|status|update|rollback <tag>|key）"; exit 1;;
 esac

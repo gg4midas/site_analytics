@@ -22,6 +22,12 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 ### v1.3.8 (2026-08-13)
 - **Console quick commands**: Added two items to the panel menu — `6: Health Check` and `7: View Logs`. Health Check covers process / port listening / HTTP probe (connects directly to `127.0.0.1:$PORT`, unaffected by reverse proxy) / data-directory writability; View Logs prints the last 40 lines of `run.log`. This version has been committed and released, so after upgrading from an older version these two items are retained and are no longer overwritten/lost by an older tarball.
 
+### v1.3.9 (2026-08-13)
+- **Deploy token (anti-tracker-theft / load protection)**: The `/api/event` endpoint now supports an optional deploy token. Once the server sets `SA_DEPLOY_KEY` (or `--deploy-key`), the tracker must send the correct token via `data-key` with every event; requests that fail validation are rejected with `403` **before any GeoIP/ASN resolution or database write**, eliminating the server pressure caused by a stolen tracker being reused on a high-traffic foreign site.
+  - Default "lenient mode": known sites (already in the `sites` table or with historical events) are still accepted, so **existing monitoring is uninterrupted**; only unknown (new) sites are blocked, ensuring smooth data continuity.
+  - "Strict mode" (`--require-key` or `SA_REQUIRE_KEY=1`, enabled after re-embedding all sites with the token): every site must carry the correct token, including known sites — fully locked down.
+  - Note: the token lives in public JS, so it only stops the most common abuse ("hitting the endpoint directly" / "theft on an unknown domain") and can be rotated/revoked at any time. It cannot defend against a determined attacker who copies your full `tracker.js` (including the token) and reuses it verbatim (client code cannot keep secrets); for that case, add allow-listing by source IP/domain at the reverse-proxy layer. See the "Deploy Token" section below.
+
 ### v1.3.7 (2026-08-13)
 - **Performance panel**: Added a collapsible "Performance Data Accuracy Notes" hint (collapsed by default, expand on click). It explains that FCP/LCP/TTFB/CLS are real-visitor measurements (RUM) with the overall figure taken at the P75 percentile; **Speed Index is a synthetic estimate, not a Lighthouse measurement, with a deviation of about ±30%~50% — do not interpret it as an absolute value**; TTFB excludes connect/TLS/redirect (systematically low); LCP/CLS may be low for short-visit sessions; the header P75 and per-page/per-device averages use different statistical bases.
 - **No user-management note**: Added "Why there is no built-in user-management system" — this tool is positioned as self-hosted personal use; access control is handled by the deployment layer (reverse-proxy basic auth / internal-network isolation) or an already-existing website-level account. For multi-user scenarios, we recommend adding authentication on Nginx/Caddy, or extending the account system on top of `--token`.
@@ -368,6 +374,44 @@ sa-console rollback <tag>          # e.g. sa-console rollback v1.2.0
 ```
 
 > Version management is based on **GitHub Releases (or an equivalent Gitee mirror)**: publish a Release with a `vX.Y.Z` tag on GitHub first, then the console can check / upgrade / roll back; if a domestic mirror is configured (`SA_UPDATE_MIRROR` or the install dir's `.update_mirror`), it reads the version list and download package from the mirror instead. The current version is recorded in the `VERSION` constant in `app.py` (change it when releasing; the console auto-compares and prompts to upgrade).
+
+---
+
+## Deploy Token (anti-tracker-theft / load protection)
+
+`/api/event` is a public endpoint (the tracker runs in visitors' browsers, so login cannot be enforced). But once the public `tracker.js` is copied wholesale and embedded on someone else's high-traffic site, your server would do GeoIP/ASN resolution + DB writes for every forged visitor, creating unnecessary load. The **deploy token** makes the server accept only events that carry the correct token, stopping the load before any DB write.
+
+### How it works
+
+- The server holds the token via an env var (or startup flag) `SA_DEPLOY_KEY`.
+- The snippet injects the token via `data-key="your-token"` and sends it back with every event.
+- The server validates before writing: unknown-site requests with a missing/wrong token are rejected with `403`, with no GeoIP/DB cost.
+
+### Two modes
+
+| Mode | How to enable | Known site (has data) | Unknown (new) site |
+|---|---|---|---|
+| **Lenient (default)** | set only `SA_DEPLOY_KEY` | accepted (no token needed) | must carry correct token, else rejected |
+| **Strict** | also `--require-key` / `SA_REQUIRE_KEY=1` | must carry correct token, else rejected | must carry correct token, else rejected |
+
+> Lenient mode exists for **smooth migration**: your existing sites (e.g. bio-starch.com) are already in the `sites` table / event store, so they are "known" and keep reporting even before you inject `data-key` — no interruption. Only **unknown domains** are blocked. So enabling the token causes zero downtime for your current monitoring.
+
+### Enable steps (recommended path)
+
+1. **Generate a token**: on the server run `bash sa-console.sh key` — it prints a random token plus a full config example.
+2. **Enable on server (lenient)**: add `SA_DEPLOY_KEY=your-token` to the systemd unit's `Environment=` (or start with `--deploy-key your-token`). Restart.
+   - Now: your known sites keep working; any unknown site reusing the script is rejected.
+3. **Re-embed everywhere**: add `data-key="your-token"` to the snippet on every site:
+   ```html
+   <script src="https://your-analytics-domain.com/tracker.js" data-site="example.com" data-key="your-token" defer></script>
+   ```
+4. **(Optional) lock down**: once all your own sites report correctly with `data-key`, start with `--require-key` (or `SA_REQUIRE_KEY=1`). From then on every site — including known ones — must carry the correct token; stolen reports are rejected too.
+5. **Rotate / revoke**: just change the `SA_DEPLOY_KEY` value and re-embed; the old token is immediately invalid.
+
+### Notes
+
+- The token lives in public JS, so it is **not a cryptographic secret** — it stops the most common abuse ("hitting the endpoint directly" / "theft on an unknown domain") and supports rotation. It cannot stop a determined attacker who copies your full `tracker.js` (with the token) and reuses it verbatim; for that, add source-IP/domain allow-listing at the reverse-proxy layer.
+- When `SA_DEPLOY_KEY` is unset, the endpoint behaves exactly like the old version (fully open), for backward compatibility.
 
 ---
 
