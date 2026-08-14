@@ -19,6 +19,12 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.2 (2026-08-14)
+- **Systematic UI review fixes (14 items)**:
+  - **P0 functional bugs (3)**: fixed missing `--fg` (dark-mode textarea was unreadable black-on-black), missing `--track` (progress-bar track was a harsh light block in dark mode), and the hardcoded black background in `.code-box` (heavy black block in light-mode modals) — all now driven by design tokens.
+  - **P1 consistency (5)**: scattered hard-coded colors (progress gradient, site-tag purple, suspect orange, perf-bar/segment white) moved to `--accent/--lead/--suspect/--track` tokens for automatic theme coordination; controls outside the top bar (refresh button, realtime window dropdown, custom date inputs) unified to a 36px height; the main deploy-code box now uses the same two-column / three-button layout as per-site boxes; chart heights consolidated to `--chart-sm/md/lg`; added spacing / font-size / radius / control-height / transition token scales.
+  - **P2 UX & a11y (6)**: added a global `:focus-visible` focus ring; brightened `--faint` so small text meets WCAG AA 4.5:1; modal now has `role="dialog"` / `aria-modal` / `aria-label`, ESC-to-close and a Tab focus trap; de-duplicated the performance-page notes into a single place; nav scrolls independently on narrow screens with the refresh button pinned; added a top loading bar plus a content fade-in loading state.
+
 ### v1.4.1 (2026-08-13)
 - **Dashboard UI polish**: In the "Site Management" modal, each site's embed code and its three action buttons are now laid out in two columns (code on the left, the three buttons stacked in three rows on the right) for a more compact, readable layout; the top bar's site selector / "+ Add Site" / date dropdown / language toggle / light-dark toggle are unified to the same height and alignment, removing the scattered look.
 - **Docs audit**: Re-audited the Chinese and English READMEs against the v1.4.0 implementation and fixed feature descriptions, the console menu (restored `6: Health Check` / `7: View Logs`), the API reference (added `POST /api/site/key`, per-site token notes), and the v1.4.0 unknown-domain rejection note.
