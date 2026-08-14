@@ -19,6 +19,13 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.3 (2026-08-14)
+- **Backend reliability hardening (P0, production-critical, zero-dependency / DB-compatible)**:
+  - **P0-1 SQLite concurrent writes**: `_conn()` now enables `WAL` journal mode + `busy_timeout=5000` + `synchronous=NORMAL` by default, eliminating `database is locked` under concurrency that previously caused **silent event loss** on tracker ingestion; existing `events.db` is reused as-is with zero migration risk.
+  - **P0-2 Request body cap**: all `POST` endpoints read through a new safe `_read_body()` helper with a **64KB** body limit and tolerant `Content-Length` parsing (no more 500 on non-integer headers), mitigating slowloris / oversized-body thread-pool exhaustion (DoS).
+  - **P0-3 Timeout & daemon threads**: `Handler.timeout=15` drops slow clients; `ThreadingHTTPServer(daemon_threads=True)` avoids hangs on shutdown.
+  - **P2-1 Timing side-channel**: `_deploy_ok` token comparison switched from `==` to `hmac.compare_digest`.
+
 ### v1.4.2 (2026-08-14)
 - **Systematic UI review fixes (14 items)**:
   - **P0 functional bugs (3)**: fixed missing `--fg` (dark-mode textarea was unreadable black-on-black), missing `--track` (progress-bar track was a harsh light block in dark mode), and the hardcoded black background in `.code-box` (heavy black block in light-mode modals) — all now driven by design tokens.

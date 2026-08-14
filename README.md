@@ -21,6 +21,13 @@
 
 ## 版本历史
 
+### v1.4.3（2026-08-14）
+- **后端可靠性加固（P0，生产必修，零依赖 / 数据库兼容）**：
+  - **P0-1 SQLite 并发写入**：`_conn()` 默认开启 `WAL` 日志模式 + `busy_timeout=5000` + `synchronous=NORMAL`，消除高并发下 `database is locked` 导致 tracker 上报**静默丢事件**的问题；旧 `events.db` 直接复用，零迁移风险。
+  - **P0-2 请求体上限**：所有 `POST` 接口统一经 `_read_body()` 安全读取，请求体上限 **64KB**，并对非整数 `Content-Length` 容错（不再返回 500），防慢速 / 超大体请求占满线程池（slowloris / DoS）。
+  - **P0-3 超时与守护线程**：`Handler.timeout=15` 断掉慢客户端，`ThreadingHTTPServer(daemon_threads=True)` 避免关闭期挂起。
+  - **P2-1 时序侧信道**：`_deploy_ok` 令牌比较由 `==` 改为 `hmac.compare_digest`，消除令牌校验的时序侧信道。
+
 ### v1.4.2（2026-08-14）
 - **UI 设计评审系统性修复（14 项）**：
   - **P0 功能性 bug（3）**：修复 `--fg` 缺失导致深色模式 textarea 黑字黑底不可读；修复 `--track` 缺失导致进度条轨道在深色下为刺眼浅块；修复 `.code-box` 硬编码黑底导致浅色主题弹窗出现沉重黑块（均改为由设计 Token 控制）。

@@ -30,6 +30,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
+import hmac
 
 # GeoIP 为可选能力：安装了 maxminddb 且提供 GeoLite2 mmdb 才启用，否则优雅降级
 try:
@@ -45,7 +46,8 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.2"
+VERSION = "1.4.3"
+MAX_BODY = 64 * 1024  # 请求体上限 64KB：防慢速/超大体请求占满线程池（slowloris / DoS）
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -351,7 +353,16 @@ class StatEngine(object):
             self._log('_init_db ERROR: %s' % e)
 
     def _conn(self):
-        return sqlite3.connect(self._db)
+        # P0-1：WAL + busy_timeout + synchronous=NORMAL，消除高并发下 "database is locked"
+        # 导致 tracker 上报静默丢事件的问题；对现有数据/查询完全兼容。
+        conn = sqlite3.connect(self._db, timeout=5)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass
+        return conn
 
     # ---------------- UA 解析 ----------------
     @staticmethod
@@ -2171,13 +2182,13 @@ class Handler(BaseHTTPRequestHandler):
         _id = (ev.get('id') or ev.get('key') or self.headers.get('X-Site-Key', '') or '').strip()
         _sk = self.engine.get_site_key(_site)
         if _sk:
-            return _id == _sk
+            return hmac.compare_digest(_id, _sk)
         if Handler.require_key:
-            return bool(Handler.deploy_key) and (_id == Handler.deploy_key)
+            return bool(Handler.deploy_key) and hmac.compare_digest(_id, Handler.deploy_key)
         if self.engine.site_known(_site):
             return True
         if Handler.deploy_key:
-            return _id == Handler.deploy_key
+            return hmac.compare_digest(_id, Handler.deploy_key)
         return False
 
     def client_ip(self):
@@ -2404,6 +2415,23 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_error(404)
 
+    def _read_body(self):
+        """安全读取请求体：64KB 上限 + Content-Length 容错。
+        防慢速/超大体请求占满线程池（slowloris / DoS）；非整数头不抛 500。"""
+        try:
+            length = int(self.headers.get('Content-Length', 0) or 0)
+        except (ValueError, TypeError):
+            length = 0
+        if length <= 0:
+            return b''
+        if length > MAX_BODY:
+            length = MAX_BODY
+        try:
+            data = self.rfile.read(length)
+        except Exception:
+            return b''
+        return data or b''
+
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -2412,8 +2440,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2440,8 +2467,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2461,8 +2487,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2501,8 +2526,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2520,8 +2544,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2539,8 +2562,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_token(parse_qs(parsed.query)):
                 self._send_json({'error': 'token 错误'}, 401); return
             try:
-                length = int(self.headers.get('Content-Length', 0) or 0)
-                raw = self.rfile.read(length) if length else b''
+                raw = self._read_body()
                 body = {}
                 if raw:
                     try:
@@ -2562,8 +2584,7 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ('/api/event', '/api/event/'):
             self.send_error(404); return
         try:
-            length = int(self.headers.get('Content-Length', 0) or 0)
-            raw = self.rfile.read(length) if length else b''
+            raw = self._read_body()
             # 支持 JSON 与 form-urlencoded
             ctype = self.headers.get('Content-Type', '')
             ev = {}
@@ -2641,9 +2662,11 @@ def main():
     Handler.deploy_key = (args.deploy_key or '').strip() or DEPLOY_KEY
     Handler.require_key = bool(args.require_key) or REQUIRE_KEY
     Handler.www_root = os.path.dirname(os.path.abspath(__file__))
+    Handler.timeout = 15  # P0-3：读/连接超时，断掉慢客户端，防 slowloris 拖住线程池
 
     try:
         httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+        httpd.daemon_threads = True  # P0-3：工作线程设为守护线程，关闭期不挂起
     except OSError as e:
         if e.errno in (errno.EADDRINUSE,):
             sys.stderr.write(
