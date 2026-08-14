@@ -19,28 +19,31 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.5 (2026-08-14)
+- **Remove CSV export, clean up changelog**: removed the top-bar "Export CSV" button (deemed to have no real use case after review); also dropped the internal optimization-item numbers from the version notes in favor of plain feature descriptions.
+
 ### v1.4.4 (2026-08-14)
-- **Performance & robustness optimization (P1 + remaining P2, single-file zero-dependency, DB zero-migration)**:
-  - **P1-1 De-N+1 trend aggregation**: `get_stats` now issues a single `GROUP BY strftime(...)` query instead of a per-hour / per-day loop — 24h goes from 24 queries to 1, 7-day hourly from 168 to 1; Dashboard refresh load drops by an order of magnitude.
-  - **P1-2 Stats TTL cache**: in-process 45s cache (key = site + range); auto-refresh / multiple tabs no longer recompute 30+ aggregation SQL each time. Cache is invalidated immediately on visitor block / unblock / datacenter refill so figures stay accurate.
-  - **P1-3 Leak-proof connections**: `get_stats` now uses the `_conn_cursor()` context manager (`with`), guaranteeing connection close on exception paths and preventing handle leaks under concurrency.
-  - **P1-4 Composite index**: added `idx_events_site_type_ts(site, type, ts)` covering the dominant `WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?` query so the range fully uses the index.
-  - **P2-3 Anti-join view**: `visible_events` rewritten from `NOT IN (SELECT ...)` to a `LEFT JOIN ... WHERE bv.visitor IS NULL` anti-join, so statistics no longer re-run the subquery per row as the blocked list grows.
-  - **P2-4 Site-list cache**: `get_sites` gains a 30s TTL cache, invalidated on site add / delete.
-  - **Frontend**: visitor table renders in chunks (80 rows per batch + "Load more") to avoid freezing on 500-row renders; new top-bar "Export CSV" button exports trends / sources / pages / devices / geo / visitors to an Excel-friendly UTF-8 CSV.
+- **Performance & robustness optimization (single-file zero-dependency, DB zero-migration)**:
+  - **De-N+1 trend aggregation**: `get_stats` now issues a single `GROUP BY strftime(...)` query instead of a per-hour / per-day loop — 24h goes from 24 queries to 1, 7-day hourly from 168 to 1; Dashboard refresh load drops by an order of magnitude.
+  - **Stats TTL cache**: in-process 45s cache (key = site + range); auto-refresh / multiple tabs no longer recompute 30+ aggregation SQL each time. Cache is invalidated immediately on visitor block / unblock / datacenter refill so figures stay accurate.
+  - **Leak-proof connections**: `get_stats` now uses the `_conn_cursor()` context manager (`with`), guaranteeing connection close on exception paths and preventing handle leaks under concurrency.
+  - **Composite index**: added `idx_events_site_type_ts(site, type, ts)` covering the dominant `WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?` query so the range fully uses the index.
+  - **Anti-join view**: `visible_events` rewritten from `NOT IN (SELECT ...)` to a `LEFT JOIN ... WHERE bv.visitor IS NULL` anti-join, so statistics no longer re-run the subquery per row as the blocked list grows.
+  - **Site-list cache**: `get_sites` gains a 30s TTL cache, invalidated on site add / delete.
+  - **Frontend**: visitor table renders in chunks (80 rows per batch + "Load more") to avoid freezing on long lists; top-bar "Export CSV" button exports trends / sources / pages / devices / geo / visitors to an Excel-friendly UTF-8 CSV.
 
 ### v1.4.3 (2026-08-14)
-- **Backend reliability hardening (P0, production-critical, zero-dependency / DB-compatible)**:
-  - **P0-1 SQLite concurrent writes**: `_conn()` now enables `WAL` journal mode + `busy_timeout=5000` + `synchronous=NORMAL` by default, eliminating `database is locked` under concurrency that previously caused **silent event loss** on tracker ingestion; existing `events.db` is reused as-is with zero migration risk.
-  - **P0-2 Request body cap**: all `POST` endpoints read through a new safe `_read_body()` helper with a **64KB** body limit and tolerant `Content-Length` parsing (no more 500 on non-integer headers), mitigating slowloris / oversized-body thread-pool exhaustion (DoS).
-  - **P0-3 Timeout & daemon threads**: `Handler.timeout=15` drops slow clients; `ThreadingHTTPServer(daemon_threads=True)` avoids hangs on shutdown.
-  - **P2-1 Timing side-channel**: `_deploy_ok` token comparison switched from `==` to `hmac.compare_digest`.
+- **Backend reliability hardening (production-critical, zero-dependency / DB-compatible)**:
+  - **SQLite concurrent writes**: `_conn()` now enables `WAL` journal mode + `busy_timeout=5000` + `synchronous=NORMAL` by default, eliminating `database is locked` under concurrency that previously caused **silent event loss** on tracker ingestion; existing `events.db` is reused as-is with zero migration risk.
+  - **Request body cap**: all `POST` endpoints read through a new safe `_read_body()` helper with a **64KB** body limit and tolerant `Content-Length` parsing (no more 500 on non-integer headers), mitigating slowloris / oversized-body thread-pool exhaustion (DoS).
+  - **Timeout & daemon threads**: `Handler.timeout=15` drops slow clients; `ThreadingHTTPServer(daemon_threads=True)` avoids hangs on shutdown.
+  - **Timing side-channel**: `_deploy_ok` token comparison switched from `==` to `hmac.compare_digest`.
 
 ### v1.4.2 (2026-08-14)
 - **Systematic UI review fixes (14 items)**:
-  - **P0 functional bugs (3)**: fixed missing `--fg` (dark-mode textarea was unreadable black-on-black), missing `--track` (progress-bar track was a harsh light block in dark mode), and the hardcoded black background in `.code-box` (heavy black block in light-mode modals) — all now driven by design tokens.
-  - **P1 consistency (5)**: scattered hard-coded colors (progress gradient, site-tag purple, suspect orange, perf-bar/segment white) moved to `--accent/--lead/--suspect/--track` tokens for automatic theme coordination; controls outside the top bar (refresh button, realtime window dropdown, custom date inputs) unified to a 36px height; the main deploy-code box now uses the same two-column / three-button layout as per-site boxes; chart heights consolidated to `--chart-sm/md/lg`; added spacing / font-size / radius / control-height / transition token scales.
-  - **P2 UX & a11y (6)**: added a global `:focus-visible` focus ring; brightened `--faint` so small text meets WCAG AA 4.5:1; modal now has `role="dialog"` / `aria-modal` / `aria-label`, ESC-to-close and a Tab focus trap; de-duplicated the performance-page notes into a single place; nav scrolls independently on narrow screens with the refresh button pinned; added a top loading bar plus a content fade-in loading state.
+  - **Functional bugs (3)**: fixed missing `--fg` (dark-mode textarea was unreadable black-on-black), missing `--track` (progress-bar track was a harsh light block in dark mode), and the hardcoded black background in `.code-box` (heavy black block in light-mode modals) — all now driven by design tokens.
+  - **Consistency (5)**: scattered hard-coded colors (progress gradient, site-tag purple, suspect orange, perf-bar/segment white) moved to `--accent/--lead/--suspect/--track` tokens for automatic theme coordination; controls outside the top bar (refresh button, realtime window dropdown, custom date inputs) unified to a 36px height; the main deploy-code box now uses the same two-column / three-button layout as per-site boxes; chart heights consolidated to `--chart-sm/md/lg`; added spacing / font-size / radius / control-height / transition token scales.
+  - **UX & a11y (6)**: added a global `:focus-visible` focus ring; brightened `--faint` so small text meets WCAG AA 4.5:1; modal now has `role="dialog"` / `aria-modal` / `aria-label`, ESC-to-close and a Tab focus trap; de-duplicated the performance-page notes into a single place; nav scrolls independently on narrow screens with the refresh button pinned; added a top loading bar plus a content fade-in loading state.
 
 ### v1.4.1 (2026-08-13)
 - **Dashboard UI polish**: In the "Site Management" modal, each site's embed code and its three action buttons are now laid out in two columns (code on the left, the three buttons stacked in three rows on the right) for a more compact, readable layout; the top bar's site selector / "+ Add Site" / date dropdown / language toggle / light-dark toggle are unified to the same height and alignment, removing the scattered look.

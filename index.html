@@ -269,7 +269,6 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
     </div>
     <button class="btn ghost" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
     <button class="btn ghost" id="btnTheme" onclick="toggleTheme()">深色</button>
-    <button class="btn ghost" id="btnExport" onclick="exportDashboardCSV()" data-i18n="导出CSV">导出CSV</button>
   </div>
 
   <div class="nav" id="nav">
@@ -1549,62 +1548,6 @@ function renderVisitorChunk(){
 }
 
 function loadMoreVisitors(){ renderVisitorChunk(); }
-
-function csvCell(v){
-  v = (v===null||v===undefined) ? '' : String(v);
-  if(/[",\n\r]/.test(v)) v = '"'+v.replace(/"/g,'""')+'"';
-  return v;
-}
-// 导出当前看板为 CSV（含趋势/来源/页面/设备/地域/访客），带 UTF-8 BOM 供 Excel 直接打开
-function exportDashboardCSV(){
-  var d = window.__lastStats;
-  if(!d){ alert(t('请先加载看板数据')); return; }
-  var rows = [];
-  rows.push(['# site', d.site||'']);
-  rows.push(['# range', d.range_label||'']);
-  rows.push(['# '+t('浏览量'), d.total_pv||0]);
-  rows.push(['# '+t('独立访客'), d.total_uv||0]);
-  rows.push([]);
-  rows.push([t('趋势-时间'), t('浏览量'), t('独立访客')]);
-  (d.daily||[]).forEach(function(r){ rows.push([ r.label||r.date||'', r.pv||0, r.uv||0 ]); });
-  rows.push([]);
-  rows.push([t('来源分类'), t('数量')]);
-  (d.sources||[]).forEach(function(r){ rows.push([ r.label||r.category||'', r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('来源域名'), t('数量')]);
-  (d.referrer||[]).forEach(function(r){ rows.push([ r.name||'', r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('热门页面'), t('浏览量')]);
-  (d.pages||[]).forEach(function(r){ rows.push([ (r.site? r.site+' ' : '') + (r.name||''), r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('设备'), t('独立访客')]);
-  (d.device||[]).forEach(function(r){ rows.push([ r.name||'', r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('浏览器'), t('独立访客')]);
-  (d.browser||[]).forEach(function(r){ rows.push([ r.name||'', r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('操作系统'), t('独立访客')]);
-  (d.os||[]).forEach(function(r){ rows.push([ r.name||'', r.value||0 ]); });
-  rows.push([]);
-  rows.push([t('国家/地区'), t('独立访客')]);
-  (d.geo_tree||d.countries||[]).forEach(function(r){ rows.push([ r.name||'', r.value||0 ]); });
-  rows.push([]);
-  var vs = window.__lastVisitors;
-  if(vs && vs.length){
-    rows.push([t('访客'), t('来路'), t('设备'), t('运营商'), t('地区'), t('页面'), t('停留'), t('最近活跃')]);
-    vs.forEach(function(v){
-      rows.push([ v.visitor||'', hostOf(v.referer||''), t(v.device||''), v.isp||'', countryName(v.cc, v.country),
-        v.pv||0, (typeof v.duration_total==='number'?fmtDuration(v.duration_total):(v.duration_text||'')), v.last_time||'' ]);
-    });
-  }
-  var csv = rows.map(function(r){ return r.map(csvCell).join(','); }).join('\r\n');
-  var blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'analytics_'+(d.site||'site')+'_'+(d.range_label||'export')+'.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
-}
 
 function toggleVisitor(idx, vid){
   var row = document.getElementById('actions-'+idx);
