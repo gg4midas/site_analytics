@@ -21,6 +21,16 @@
 
 ## 版本历史
 
+### v1.4.4（2026-08-14）
+- **性能与健壮性优化（P1 + P2 收尾，单文件零依赖、数据库零迁移）**：
+  - **P1-1 趋势聚合去 N+1**：`get_stats` 的逐小时 / 逐天循环改为单条 `GROUP BY strftime(...)` 聚合，24 小时由 24 次查询降为 1 次、7 天小时级由 168 次降为 1 次，Dashboard 刷新负载降一个量级。
+  - **P1-2 统计结果 TTL 缓存**：进程内 45 秒缓存（key = 站点 + 区间），自动刷新 / 多标签页不再每次重算 30+ 条聚合 SQL；屏蔽访客（block/unblock/机房回填）后立即失效缓存，数据口径实时准确。
+  - **P1-3 连接防泄漏**：`get_stats` 改用 `_conn_cursor()` 上下文管理器（`with`），异常路径也确保连接关闭，杜绝并发下的连接句柄泄漏。
+  - **P1-4 复合索引**：新增 `idx_events_site_type_ts(site, type, ts)`，覆盖主导查询 `WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?`，使范围走完索引。
+  - **P2-3 可见事件视图反连接**：`visible_events` 由 `NOT IN (SELECT ...)` 子查询改为 `LEFT JOIN ... WHERE bv.visitor IS NULL` 反连接，屏蔽表变大时统计不再每条重跑子查询。
+  - **P2-4 站点列表缓存**：`get_sites` 加 30 秒 TTL 缓存，新增 / 删除站点时失效。
+  - **前端**：访客表分块渲染（每批 80 行 +「加载更多」），避免 500 行一次性渲染卡顿；顶栏新增「导出 CSV」，一键导出趋势 / 来源 / 页面 / 设备 / 地域 / 访客为 Excel 可打开的 UTF-8 CSV。
+
 ### v1.4.3（2026-08-14）
 - **后端可靠性加固（P0，生产必修，零依赖 / 数据库兼容）**：
   - **P0-1 SQLite 并发写入**：`_conn()` 默认开启 `WAL` 日志模式 + `busy_timeout=5000` + `synchronous=NORMAL`，消除高并发下 `database is locked` 导致 tracker 上报**静默丢事件**的问题；旧 `events.db` 直接复用，零迁移风险。

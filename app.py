@@ -31,6 +31,14 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 import hmac
+import time
+from contextlib import contextmanager
+
+# 进程内 TTL 缓存（性能优化：get_stats / get_sites，见 P1-2 / P2-4）
+_stats_cache = {}      # key=(site, days, range_str) -> (expire_ts, payload)
+_sites_cache = {}      # key=("_sites",) -> (expire_ts, payload)
+STATS_CACHE_TTL = 45   # 统计结果缓存 45 秒（analytics 容忍数十秒延迟）
+SITES_CACHE_TTL = 30   # 站点列表缓存 30 秒
 
 # GeoIP 为可选能力：安装了 maxminddb 且提供 GeoLite2 mmdb 才启用，否则优雅降级
 try:
@@ -46,7 +54,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 MAX_BODY = 64 * 1024  # 请求体上限 64KB：防慢速/超大体请求占满线程池（slowloris / DoS）
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
@@ -316,6 +324,8 @@ class StatEngine(object):
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_site_type ON events(site, type)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_visitor_ts ON events(visitor, ts)")
+            # P1-4：覆盖主导查询 WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?，使范围走完索引
+            c.execute("CREATE INDEX IF NOT EXISTS idx_events_site_type_ts ON events(site, type, ts)")
             c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
             c.execute("CREATE TABLE IF NOT EXISTS sites(site TEXT PRIMARY KEY, label TEXT, created INTEGER, site_key TEXT)")
             # 迁移：老库可能缺少 site_key 列（每站点独立的部署令牌 / data-id）
@@ -344,8 +354,9 @@ class StatEngine(object):
             try:
                 c.execute("DROP VIEW IF EXISTS visible_events")
                 c.execute(
-                    "CREATE VIEW visible_events AS SELECT * FROM events "
-                    "WHERE visitor NOT IN (SELECT visitor FROM blocked_visitors)")
+                    "CREATE VIEW visible_events AS SELECT e.* FROM events e "
+                    "LEFT JOIN blocked_visitors bv ON e.visitor = bv.visitor "
+                    "WHERE bv.visitor IS NULL")
             except Exception as e:
                 self._log('create visible_events view ERROR: %s' % e)
             conn.commit(); conn.close()
@@ -363,6 +374,18 @@ class StatEngine(object):
         except Exception:
             pass
         return conn
+
+    @contextmanager
+    def _conn_cursor(self):
+        """上下文管理器：开连接并产出 cursor，退出时确保关闭（P1-3 防连接泄漏）。"""
+        conn = self._conn()
+        try:
+            yield conn.cursor()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     # ---------------- UA 解析 ----------------
     @staticmethod
@@ -750,16 +773,24 @@ class StatEngine(object):
 
     # ---------------- 读取 ----------------
     def get_sites(self):
-        """返回主域去重排序列表（同一主域下的所有子域归并为一个主域条目）。"""
+        """返回主域去重排序列表（同一主域下的所有子域归并为一个主域条目）。P2-4：30s TTL 缓存。"""
+        now = time.time()
+        hit = _sites_cache.get(('_sites',))
+        if hit and hit[0] > now:
+            return hit[1]
+        result = self._compute_sites()
+        _sites_cache[('_sites',)] = (now + SITES_CACHE_TTL, result)
+        return result
+
+    def _compute_sites(self):
         try:
-            conn = self._conn()
-            rows = conn.execute("SELECT DISTINCT site FROM events").fetchall()
-            seen = set(r[0] for r in rows if r[0])
-            mrows = conn.execute("SELECT site FROM sites").fetchall()
-            for r in mrows:
-                if r[0]:
-                    seen.add(r[0])
-            conn.close()
+            with self._conn_cursor() as c:
+                rows = c.execute("SELECT DISTINCT site FROM events").fetchall()
+                seen = set(r[0] for r in rows if r[0])
+                mrows = c.execute("SELECT site FROM sites").fetchall()
+                for r in mrows:
+                    if r[0]:
+                        seen.add(r[0])
             roots = set(self._domain_root(s) for s in seen if s)
             return self._sort_by_order(list(roots))
         except Exception as e:
@@ -924,6 +955,7 @@ class StatEngine(object):
                 "INSERT OR IGNORE INTO sites(site, label, created, site_key) VALUES(?,?,?,?)",
                 (site, label, int(datetime.now().timestamp() * 1000), _secrets.token_urlsafe(16)))
             conn.commit(); conn.close()
+            _sites_cache.clear()  # 站点列表变更，失效缓存（P2-4）
             return True, site
         except Exception as e:
             return False, str(e)
@@ -1133,6 +1165,7 @@ class StatEngine(object):
                 "VALUES(?,?,?,?,?,?)",
                 (visitor, (site or '').strip().lower(), (reason or '').strip(), (isp or '').strip(), asn or 0, ts))
             conn.commit(); conn.close()
+            _stats_cache.clear()  # 屏蔽影响统计口径，立即失效缓存（P1-2）
             self._log('block_visitor: %s (site=%s reason=%s)' % (visitor, site, reason))
             return True
         except Exception as e:
@@ -1148,6 +1181,7 @@ class StatEngine(object):
             conn = self._conn()
             conn.execute("DELETE FROM blocked_visitors WHERE visitor=?", (visitor,))
             conn.commit(); conn.close()
+            _stats_cache.clear()  # 解除屏蔽后历史数据重新计入，立即失效缓存（P1-2）
             self._log('unblock_visitor: %s' % visitor)
             return True
         except Exception as e:
@@ -1256,6 +1290,18 @@ class StatEngine(object):
             return 0
 
     def get_stats(self, site, days=30, range_str=None):
+        # P1-2：进程内 TTL 缓存，避免每次刷新重算 30+ 条聚合 SQL
+        key = (site, days, range_str)
+        now = time.time()
+        hit = _stats_cache.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+        payload = self._compute_stats(site, days, range_str)
+        if 'error' not in payload:
+            _stats_cache[key] = (now + STATS_CACHE_TTL, payload)
+        return payload
+
+    def _compute_stats(self, site, days=30, range_str=None):
         try:
             days = int(days)
         except (ValueError, TypeError):
@@ -1272,324 +1318,306 @@ class StatEngine(object):
         # ===== 解析时间范围（东八区）=====
         start_ms, end_ms, range_label, granularity = self._parse_range(range_str, days)
 
-        conn = self._conn()
-        c = conn.cursor()
+        with self._conn_cursor() as c:
 
-        # ===== 趋势数据：按小时或按天 =====
-        if granularity == 'hour':
-            # 生成从 start 到 end 每个整点
-            trend = []
-            cur = datetime.fromtimestamp(start_ms / 1000, tz=TZ_BEIJING)
-            end_dt = datetime.fromtimestamp(end_ms / 1000, tz=TZ_BEIJING)
-            while cur < end_dt:
-                hs = cur.strftime('%Y-%m-%d %H')
-                h_start, h_end = self._hour_bounds(hs)
-                # clamp 到实际 end_ms
-                h_end = min(h_end, end_ms)
-                row = c.execute(
-                    "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                    sp + (h_start, h_end)).fetchone()
-                # 标签：HH:MM 或 MM-DD HH
-                label = cur.strftime('%m-%d %H:00') if (end_dt - cur).days > 0 else cur.strftime('%H:00')
-                trend.append({'label': label, 'pv': row[0] or 0, 'uv': row[1] or 0})
-                cur += timedelta(hours=1)
-            daily = trend
-        else:
-            # 按天聚合（兼容旧字段名 daily）
-            dates = []
-            cur = datetime.fromtimestamp(start_ms / 1000, tz=TZ_BEIJING)
-            end_dt = datetime.fromtimestamp(end_ms / 1000, tz=TZ_BEIJING)
-            while cur < end_dt:
-                dates.append(cur.strftime('%Y-%m-%d'))
-                cur += timedelta(days=1)
-            daily = []
-            for d in dates:
-                d_start, d_end = self._bj_day_bounds(d)
-                d_end = min(d_end, end_ms)
-                row = c.execute(
-                    "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                    sp + (d_start, d_end)).fetchone()
-                daily.append({'date': d, 'pv': row[0] or 0, 'uv': row[1] or 0})
+            # ===== 趋势数据：按小时或按天 =====
+            if granularity == 'hour':
+                # P1-1：单条 GROUP BY 替代逐小时 N+1 查询（SQLite 完成分桶）
+                hrows = c.execute(
+                    "SELECT strftime('%%Y-%%m-%%d %%H', ts/1000, 'unixepoch', 'localtime') h, "
+                    "COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY h ORDER BY h" % ph,
+                    sp + (start_ms, end_ms)).fetchall()
+                hmap = {r[0]: (r[1] or 0, r[2] or 0) for r in hrows}
+                trend = []
+                cur = datetime.fromtimestamp(start_ms / 1000, tz=TZ_BEIJING)
+                end_dt = datetime.fromtimestamp(end_ms / 1000, tz=TZ_BEIJING)
+                while cur < end_dt:
+                    hs = cur.strftime('%Y-%m-%d %H')
+                    pv, uv = hmap.get(hs, (0, 0))
+                    # 标签：HH:MM 或 MM-DD HH（与原逻辑一致）
+                    label = cur.strftime('%m-%d %H:00') if (end_dt - cur).days > 0 else cur.strftime('%H:00')
+                    trend.append({'label': label, 'pv': pv, 'uv': uv})
+                    cur += timedelta(hours=1)
+                daily = trend
+            else:
+                # 按天聚合（兼容旧字段名 daily）；P1-1：单条 GROUP BY 替代逐天 N+1
+                drows = c.execute(
+                    "SELECT strftime('%%Y-%%m-%%d', ts/1000, 'unixepoch', 'localtime') d, "
+                    "COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY d ORDER BY d" % ph,
+                    sp + (start_ms, end_ms)).fetchall()
+                dmap = {r[0]: (r[1] or 0, r[2] or 0) for r in drows}
+                daily = []
+                cur = datetime.fromtimestamp(start_ms / 1000, tz=TZ_BEIJING)
+                end_dt = datetime.fromtimestamp(end_ms / 1000, tz=TZ_BEIJING)
+                while cur < end_dt:
+                    d = cur.strftime('%Y-%m-%d')
+                    pv, uv = dmap.get(d, (0, 0))
+                    daily.append({'date': d, 'pv': pv, 'uv': uv})
+                    cur += timedelta(days=1)
 
-        # 总量
-        tot = c.execute(
-            "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-            "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-            sp + (start_ms, end_ms)).fetchone()
-        total_pv = tot[0] or 0
-        total_uv = tot[1] or 0
+            # 总量
+            tot = c.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
+                "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
+                sp + (start_ms, end_ms)).fetchone()
+            total_pv = tot[0] or 0
+            total_uv = tot[1] or 0
 
-        # 会话与跳出率
-        bounced = c.execute(
-            "SELECT COUNT(*) FROM ("
-            "SELECT session FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-            "GROUP BY session HAVING COUNT(*)=1)" % ph, sp + (start_ms, end_ms)).fetchone()[0] or 0
-        sessions = c.execute(
-            "SELECT COUNT(DISTINCT session) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-            sp + (start_ms, end_ms)).fetchone()[0] or 0
-        bounce = round(100.0 * bounced / sessions, 1) if sessions else 0
+            # 会话与跳出率
+            bounced = c.execute(
+                "SELECT COUNT(*) FROM ("
+                "SELECT session FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                "GROUP BY session HAVING COUNT(*)=1)" % ph, sp + (start_ms, end_ms)).fetchone()[0] or 0
+            sessions = c.execute(
+                "SELECT COUNT(DISTINCT session) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
+                sp + (start_ms, end_ms)).fetchone()[0] or 0
+            bounce = round(100.0 * bounced / sessions, 1) if sessions else 0
 
-        # 平均停留时长（按会话汇总 pagehide.duration）
-        avg_row = c.execute(
-            "SELECT AVG(d) FROM ("
-            "SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-            "GROUP BY session)" % ph, sp + (start_ms, end_ms)).fetchone()
-        avg_duration = int(round(avg_row[0] or 0))
+            # 平均停留时长（按会话汇总 pagehide.duration）
+            avg_row = c.execute(
+                "SELECT AVG(d) FROM ("
+                "SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                "GROUP BY session)" % ph, sp + (start_ms, end_ms)).fetchone()
+            avg_duration = int(round(avg_row[0] or 0))
 
-        def top(tbl_col, lim=15, src_col='path'):
+            def top(tbl_col, lim=15, src_col='path'):
+                c.execute(
+                    "SELECT %s, COUNT(*) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                    "GROUP BY %s ORDER BY c DESC LIMIT %d" % (src_col, ph, src_col, lim),
+                    sp + (start_ms, end_ms))
+                return [{'name': r[0] or '(未知)', 'value': r[1]} for r in c.fetchall()]
+
+            # 热门页面：按 (子域, 路径) 分组，剥离查询串，保留各自子域，前端据此拼多语言/带 www 的完整链接
             c.execute(
-                "SELECT %s, COUNT(*) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-                "GROUP BY %s ORDER BY c DESC LIMIT %d" % (src_col, ph, src_col, lim),
+                "SELECT site, %s, COUNT(*) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                "GROUP BY site, %s ORDER BY c DESC LIMIT 15" % (_CLEAN_PATH_SQL, ph, _CLEAN_PATH_SQL),
                 sp + (start_ms, end_ms))
-            return [{'name': r[0] or '(未知)', 'value': r[1]} for r in c.fetchall()]
+            pages = [{'name': r[1] or '(未知)', 'value': r[2], 'site': r[0] or ''} for r in c.fetchall()]
 
-        # 热门页面：按 (子域, 路径) 分组，剥离查询串，保留各自子域，前端据此拼多语言/带 www 的完整链接
-        c.execute(
-            "SELECT site, %s, COUNT(*) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-            "GROUP BY site, %s ORDER BY c DESC LIMIT 15" % (_CLEAN_PATH_SQL, ph, _CLEAN_PATH_SQL),
-            sp + (start_ms, end_ms))
-        pages = [{'name': r[1] or '(未知)', 'value': r[2], 'site': r[0] or ''} for r in c.fetchall()]
+            def dist(col, lim=8):
+                c.execute(
+                    "SELECT %s, COUNT(DISTINCT visitor) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                    "GROUP BY %s ORDER BY c DESC LIMIT %d" % (col, ph, col, lim),
+                    sp + (start_ms, end_ms))
+                return [{'name': r[0] or '其他', 'value': r[1]} for r in c.fetchall()]
 
-        def dist(col, lim=8):
-            c.execute(
-                "SELECT %s, COUNT(DISTINCT visitor) c FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-                "GROUP BY %s ORDER BY c DESC LIMIT %d" % (col, ph, col, lim),
-                sp + (start_ms, end_ms))
-            return [{'name': r[0] or '其他', 'value': r[1]} for r in c.fetchall()]
+            device = dist('device')
+            browser = dist('browser')
+            os_dist = dist('os')
 
-        device = dist('device')
-        browser = dist('browser')
-        os_dist = dist('os')
+            # ===== 来源分类：以每位访客「落地来源」（窗口内首条 pageview 的 referrer）为唯一归属，
+            #      使各来源独立访客数之和 == 概览总独立访客数（不重复计数）=====
+            cat_counter = {}
+            dom_counter = {}
+            try:
+                for r in c.execute(self._landing_refs_sql(ph),
+                                   sp + (start_ms, end_ms) + sp + (start_ms, end_ms)).fetchall():
+                    ref = r[1] or ''
+                    category, host = self.classify_source(ref, site)
+                    cat_counter[category] = cat_counter.get(category, 0) + 1   # 每位访客计 1
+                    if host:
+                        dom_counter[host] = dom_counter.get(host, 0) + 1
+            except Exception as e:
+                self._log('get_stats sources ERROR: %s' % e)
+            SOURCE_LABELS = {'search': '搜索引擎', 'ai': 'AI 工具', 'social': '社交媒体',
+                             'link': '外部链接', 'direct': '直接访问'}
+            sources = sorted(
+                [{'category': k, 'label': SOURCE_LABELS.get(k, k), 'value': v}
+                 for k, v in cat_counter.items()],
+                key=lambda x: -x['value'])
+            referrer = sorted(
+                [{'name': k, 'value': v} for k, v in dom_counter.items()],
+                key=lambda x: -x['value'])[:15]
 
-        # ===== 来源分类：以每位访客「落地来源」（窗口内首条 pageview 的 referrer）为唯一归属，
-        #      使各来源独立访客数之和 == 概览总独立访客数（不重复计数）=====
-        cat_counter = {}
-        dom_counter = {}
-        try:
-            for r in c.execute(self._landing_refs_sql(ph),
-                               sp + (start_ms, end_ms) + sp + (start_ms, end_ms)).fetchall():
-                ref = r[1] or ''
-                category, host = self.classify_source(ref, site)
-                cat_counter[category] = cat_counter.get(category, 0) + 1   # 每位访客计 1
-                if host:
-                    dom_counter[host] = dom_counter.get(host, 0) + 1
-        except Exception as e:
-            self._log('get_stats sources ERROR: %s' % e)
-        SOURCE_LABELS = {'search': '搜索引擎', 'ai': 'AI 工具', 'social': '社交媒体',
-                         'link': '外部链接', 'direct': '直接访问'}
-        sources = sorted(
-            [{'category': k, 'label': SOURCE_LABELS.get(k, k), 'value': v}
-             for k, v in cat_counter.items()],
-            key=lambda x: -x['value'])
-        referrer = sorted(
-            [{'name': k, 'value': v} for k, v in dom_counter.items()],
-            key=lambda x: -x['value'])[:15]
+            # ===== 子域/语言站点分布（同一主域下各子域名，按独立访客）=====
+            subdomains = []
+            try:
+                c.execute(
+                    "SELECT site, COUNT(DISTINCT visitor) c FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                    "GROUP BY site ORDER BY c DESC" % ph, sp + (start_ms, end_ms))
+                subdomains = [{'name': r[0], 'value': r[1]} for r in c.fetchall()]
+            except Exception as e:
+                self._log('get_stats subdomains ERROR: %s' % e)
 
-        # ===== 子域/语言站点分布（同一主域下各子域名，按独立访客）=====
-        subdomains = []
-        try:
-            c.execute(
-                "SELECT site, COUNT(DISTINCT visitor) c FROM visible_events "
-                "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-                "GROUP BY site ORDER BY c DESC" % ph, sp + (start_ms, end_ms))
-            subdomains = [{'name': r[0], 'value': r[1]} for r in c.fetchall()]
-        except Exception as e:
-            self._log('get_stats subdomains ERROR: %s' % e)
+            # ===== 地域：国家 -> 城市 从属树 =====
+            geo_tree = []
+            try:
+                country_totals = {}
+                c.execute(
+                    "SELECT country_name, COUNT(DISTINCT visitor) c FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? AND country_name<>'' "
+                    "GROUP BY country_name" % ph, sp + (start_ms, end_ms))
+                for r in c.fetchall():
+                    country_totals[r[0]] = r[1] or 0
+                c.execute(
+                    "SELECT country_code, country_name, city, COUNT(DISTINCT visitor) c FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? AND country_name<>'' "
+                    "GROUP BY country_name, city" % ph, sp + (start_ms, end_ms))
+                tree = {}
+                for r in c.fetchall():
+                    cc, cname, city, cval = r[0], r[1], r[2], r[3] or 0
+                    node = tree.setdefault(cname, {'code': cc or '', 'name': cname,
+                                                   'value': country_totals.get(cname, 0), 'cities': {}})
+                    if cc and not node['code']:
+                        node['code'] = cc
+                    if city:
+                        node['cities'][city] = node['cities'].get(city, 0) + cval
+                for cname, node in tree.items():
+                    cities_sorted = sorted(
+                        [{'name': k, 'value': v} for k, v in node['cities'].items() if k],
+                        key=lambda x: -x['value'])[:12]
+                    geo_tree.append({
+                        'code': node['code'], 'name': node['name'],
+                        'value': node['value'], 'cities': cities_sorted,
+                    })
+                geo_tree.sort(key=lambda x: -x['value'])
+            except Exception as e:
+                self._log('get_stats geo_tree ERROR: %s' % e)
 
-        # ===== 地域：国家 -> 城市 从属树 =====
-        geo_tree = []
-        try:
-            country_totals = {}
-            c.execute(
-                "SELECT country_name, COUNT(DISTINCT visitor) c FROM visible_events "
-                "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? AND country_name<>'' "
-                "GROUP BY country_name" % ph, sp + (start_ms, end_ms))
-            for r in c.fetchall():
-                country_totals[r[0]] = r[1] or 0
-            c.execute(
-                "SELECT country_code, country_name, city, COUNT(DISTINCT visitor) c FROM visible_events "
-                "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? AND country_name<>'' "
-                "GROUP BY country_name, city" % ph, sp + (start_ms, end_ms))
-            tree = {}
-            for r in c.fetchall():
-                cc, cname, city, cval = r[0], r[1], r[2], r[3] or 0
-                node = tree.setdefault(cname, {'code': cc or '', 'name': cname,
-                                               'value': country_totals.get(cname, 0), 'cities': {}})
-                if cc and not node['code']:
-                    node['code'] = cc
-                if city:
-                    node['cities'][city] = node['cities'].get(city, 0) + cval
-            for cname, node in tree.items():
-                cities_sorted = sorted(
-                    [{'name': k, 'value': v} for k, v in node['cities'].items() if k],
-                    key=lambda x: -x['value'])[:12]
-                geo_tree.append({
-                    'code': node['code'], 'name': node['name'],
-                    'value': node['value'], 'cities': cities_sorted,
-                })
-            geo_tree.sort(key=lambda x: -x['value'])
-        except Exception as e:
-            self._log('get_stats geo_tree ERROR: %s' % e)
+            # ===== 新访客 vs 回访客（按首次到访时间，相对区间起点）=====
+            nr = {'new': 0, 'returning': 0, 'new_pct': 0, 'returning_pct': 0}
+            try:
+                c.execute(
+                    "SELECT visitor, MIN(ts) FROM visible_events WHERE site IN (%s) AND visitor IN "
+                    "(SELECT DISTINCT visitor FROM visible_events WHERE site IN (%s) AND ts>=? AND ts<?) "
+                    "GROUP BY visitor" % (ph, ph),
+                    sp + sp + (start_ms, end_ms))
+                for r in c.fetchall():
+                    if (r[1] or 0) < start_ms:
+                        nr['returning'] += 1
+                    else:
+                        nr['new'] += 1
+                tot_nr = nr['new'] + nr['returning']
+                if tot_nr:
+                    nr['new_pct'] = round(100.0 * nr['new'] / tot_nr, 1)
+                    nr['returning_pct'] = round(100.0 * nr['returning'] / tot_nr, 1)
+            except Exception as e:
+                self._log('get_stats new_returning ERROR: %s' % e)
 
-        # ===== 新访客 vs 回访客（按首次到访时间，相对区间起点）=====
-        nr = {'new': 0, 'returning': 0, 'new_pct': 0, 'returning_pct': 0}
-        try:
-            c.execute(
-                "SELECT visitor, MIN(ts) FROM visible_events WHERE site IN (%s) AND visitor IN "
-                "(SELECT DISTINCT visitor FROM visible_events WHERE site IN (%s) AND ts>=? AND ts<?) "
-                "GROUP BY visitor" % (ph, ph),
-                sp + sp + (start_ms, end_ms))
-            for r in c.fetchall():
-                if (r[1] or 0) < start_ms:
-                    nr['returning'] += 1
-                else:
-                    nr['new'] += 1
-            tot_nr = nr['new'] + nr['returning']
-            if tot_nr:
-                nr['new_pct'] = round(100.0 * nr['new'] / tot_nr, 1)
-                nr['returning_pct'] = round(100.0 * nr['returning'] / tot_nr, 1)
-        except Exception as e:
-            self._log('get_stats new_returning ERROR: %s' % e)
+            # ===== 落地页 / 退出页（按会话首/末页面，访客数排名；按 子域+路径 分组，剥离查询串）=====
+            landing_pages = []
+            exit_pages = []
+            try:
+                c.execute(
+                    "SELECT site, cp, COUNT(*) c FROM ("
+                    "SELECT site, visitor, %s AS cp, ROW_NUMBER() OVER (PARTITION BY visitor ORDER BY ts ASC) rn "
+                    "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
+                    ") WHERE rn=1 GROUP BY site, cp ORDER BY c DESC LIMIT 10" % (_CLEAN_PATH_SQL, ph),
+                    sp + (start_ms, end_ms))
+                landing_pages = [{'site': r[0] or '', 'path': r[1] or '/', 'value': r[2]} for r in c.fetchall()]
+                c.execute(
+                    "SELECT site, cp, COUNT(*) c FROM ("
+                    "SELECT site, visitor, %s AS cp, ROW_NUMBER() OVER (PARTITION BY visitor ORDER BY ts DESC) rn "
+                    "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
+                    ") WHERE rn=1 GROUP BY site, cp ORDER BY c DESC LIMIT 10" % (_CLEAN_PATH_SQL, ph),
+                    sp + (start_ms, end_ms))
+                exit_pages = [{'site': r[0] or '', 'path': r[1] or '/', 'value': r[2]} for r in c.fetchall()]
+            except Exception as e:
+                self._log('get_stats landing/exit ERROR: %s' % e)
 
-        # ===== 落地页 / 退出页（按会话首/末页面，访客数排名；按 子域+路径 分组，剥离查询串）=====
-        landing_pages = []
-        exit_pages = []
-        try:
-            c.execute(
-                "SELECT site, cp, COUNT(*) c FROM ("
-                "SELECT site, visitor, %s AS cp, ROW_NUMBER() OVER (PARTITION BY visitor ORDER BY ts ASC) rn "
-                "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
-                ") WHERE rn=1 GROUP BY site, cp ORDER BY c DESC LIMIT 10" % (_CLEAN_PATH_SQL, ph),
-                sp + (start_ms, end_ms))
-            landing_pages = [{'site': r[0] or '', 'path': r[1] or '/', 'value': r[2]} for r in c.fetchall()]
-            c.execute(
-                "SELECT site, cp, COUNT(*) c FROM ("
-                "SELECT site, visitor, %s AS cp, ROW_NUMBER() OVER (PARTITION BY visitor ORDER BY ts DESC) rn "
-                "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
-                ") WHERE rn=1 GROUP BY site, cp ORDER BY c DESC LIMIT 10" % (_CLEAN_PATH_SQL, ph),
-                sp + (start_ms, end_ms))
-            exit_pages = [{'site': r[0] or '', 'path': r[1] or '/', 'value': r[2]} for r in c.fetchall()]
-        except Exception as e:
-            self._log('get_stats landing/exit ERROR: %s' % e)
+            # ===== 访问深度分布（按访客访问的不同页面数分桶）=====
+            depth_distribution = []
+            try:
+                c.execute(
+                    "SELECT (CASE WHEN np=1 THEN '1' WHEN np BETWEEN 2 AND 3 THEN '2-3' WHEN np BETWEEN 4 AND 6 THEN '4-6' ELSE '7+' END) AS bucket, COUNT(*) c FROM ("
+                    "SELECT visitor, COUNT(DISTINCT path) np FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                    "GROUP BY visitor) GROUP BY bucket" % ph, sp + (start_ms, end_ms))
+                raw_depth = {r[0]: r[1] for r in c.fetchall()}
+                depth_distribution = [
+                    {'bucket': '1', 'value': raw_depth.get('1', 0)},
+                    {'bucket': '2-3', 'value': raw_depth.get('2-3', 0)},
+                    {'bucket': '4-6', 'value': raw_depth.get('4-6', 0)},
+                    {'bucket': '7+', 'value': raw_depth.get('7+', 0)},
+                ]
+            except Exception as e:
+                self._log('get_stats depth ERROR: %s' % e)
 
-        # ===== 访问深度分布（按访客访问的不同页面数分桶）=====
-        depth_distribution = []
-        try:
-            c.execute(
-                "SELECT (CASE WHEN np=1 THEN '1' WHEN np BETWEEN 2 AND 3 THEN '2-3' WHEN np BETWEEN 4 AND 6 THEN '4-6' ELSE '7+' END) AS bucket, COUNT(*) c FROM ("
-                "SELECT visitor, COUNT(DISTINCT path) np FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-                "GROUP BY visitor) GROUP BY bucket" % ph, sp + (start_ms, end_ms))
-            raw_depth = {r[0]: r[1] for r in c.fetchall()}
-            depth_distribution = [
-                {'bucket': '1', 'value': raw_depth.get('1', 0)},
-                {'bucket': '2-3', 'value': raw_depth.get('2-3', 0)},
-                {'bucket': '4-6', 'value': raw_depth.get('4-6', 0)},
-                {'bucket': '7+', 'value': raw_depth.get('7+', 0)},
-            ]
-        except Exception as e:
-            self._log('get_stats depth ERROR: %s' % e)
+            # ===== 页面平均停留时长（pagehide 时长，按 子域+路径 聚合，剥离查询串）=====
+            page_dwell = []
+            try:
+                c.execute(
+                    "SELECT site, %s, AVG(duration), COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                    "GROUP BY site, %s HAVING COUNT(*)>=1 ORDER BY COUNT(*) DESC LIMIT 15" % (_CLEAN_PATH_SQL, ph, _CLEAN_PATH_SQL),
+                    sp + (start_ms, end_ms))
+                page_dwell = [{'site': r[0] or '', 'path': r[1] or '/', 'avg': int(round(r[2] or 0)), 'views': r[3]} for r in c.fetchall()]
+            except Exception as e:
+                self._log('get_stats page_dwell ERROR: %s' % e)
 
-        # ===== 页面平均停留时长（pagehide 时长，按 子域+路径 聚合，剥离查询串）=====
-        page_dwell = []
-        try:
-            c.execute(
-                "SELECT site, %s, AVG(duration), COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-                "GROUP BY site, %s HAVING COUNT(*)>=1 ORDER BY COUNT(*) DESC LIMIT 15" % (_CLEAN_PATH_SQL, ph, _CLEAN_PATH_SQL),
-                sp + (start_ms, end_ms))
-            page_dwell = [{'site': r[0] or '', 'path': r[1] or '/', 'avg': int(round(r[2] or 0)), 'views': r[3]} for r in c.fetchall()]
-        except Exception as e:
-            self._log('get_stats page_dwell ERROR: %s' % e)
+            # ===== 当前在线（近 5 分钟活跃独立访客）=====
+            online = self.current_online(site, 5)
 
-        # ===== 当前在线（近 5 分钟活跃独立访客）=====
-        online = self.current_online(site, 5)
+            # ===== Core Web Vitals（页面性能，perf 事件聚合，按设备分组）=====
+            _PERF_KEYS = ('fcp', 'lcp', 'ttfb', 'cls', 'speed_index')
+            perf_overall = {k: 0 for k in _PERF_KEYS}
+            perf_pages = []
+            perf_by_device = {}
 
-        # ===== Core Web Vitals（页面性能，perf 事件聚合，按设备分组）=====
-        _PERF_KEYS = ('fcp', 'lcp', 'ttfb', 'cls', 'speed_index')
-        perf_overall = {k: 0 for k in _PERF_KEYS}
-        perf_pages = []
-        perf_by_device = {}
+            def _p75(vals):
+                if not vals:
+                    return 0
+                s = sorted(vals)
+                n = len(s)
+                idx = int(0.75 * (n - 1))
+                return round(s[idx], 3)
 
-        def _p75(vals):
-            if not vals:
-                return 0
-            s = sorted(vals)
-            n = len(s)
-            idx = int(0.75 * (n - 1))
-            return round(s[idx], 3)
-
-        try:
-            c.execute(
-                "SELECT site, path, meta, device FROM visible_events WHERE site IN (%s) AND type='perf' AND ts>=? AND ts<?"
-                % ph, sp + (start_ms, end_ms))
-            all_values = {k: [] for k in _PERF_KEYS}  # 用于计算整体 p75
-            perf_event_count = 0
-            pacc = {}  # key: (site, path)
-            for r in c.fetchall():
-                perf_event_count += 1
-                site_k = (r[0] or '').strip().lower()
-                path = r[1] or '/'
-                dev = (r[3] or '未知')
-                try:
-                    m = json.loads(r[2]) if r[2] else {}
-                except Exception:
-                    m = {}
-                if not isinstance(m, dict):
-                    continue
-                # 先统一归一化（处理 ms 误存、过滤极端异常值），后续聚合均用归一化后的值
-                norm = {k: _normalize_perf(k, m.get(k)) for k in _PERF_KEYS}
-                for k in _PERF_KEYS:
-                    v = norm[k]
-                    if v is not None:
-                        all_values[k].append(v)
-                sp_key = (site_k, path)
-                pa = pacc.setdefault(sp_key, {k: [0, 0] for k in _PERF_KEYS})
-                pa['views'] = pa.get('views', 0) + 1
-                for k in _PERF_KEYS:
-                    v = norm[k]
-                    if v is not None:
-                        pa[k][0] += v
-                        pa[k][1] += 1
-                # 按设备分组聚合
-                if dev not in perf_by_device:
-                    perf_by_device[dev] = {'values': {k: [] for k in _PERF_KEYS}, 'pacc': {}, 'count': 0}
-                d = perf_by_device[dev]
-                d['count'] += 1
-                for k in _PERF_KEYS:
-                    v = norm[k]
-                    if v is not None:
-                        d['values'][k].append(v)
-                dpa = d['pacc'].setdefault(sp_key, {k: [0, 0] for k in _PERF_KEYS})
-                dpa['views'] = dpa.get('views', 0) + 1
-                for k in _PERF_KEYS:
-                    v = norm[k]
-                    if v is not None:
-                        dpa[k][0] += v
-                        dpa[k][1] += 1
-            # 整体与设备汇总使用 p75（与 PageSpeed Insights 字段数据对齐，比均值更抗极端值）
-            perf_overall = {k: _p75(all_values[k]) for k in _PERF_KEYS}
-            ptmp = []
-            for (sk, path), pa in pacc.items():
-                if pa['views'] < 1:
-                    continue
-                ptmp.append({
-                    'site': sk, 'path': path, 'views': pa['views'],
-                    'fcp': round(pa['fcp'][0] / pa['fcp'][1], 3) if pa['fcp'][1] else 0,
-                    'lcp': round(pa['lcp'][0] / pa['lcp'][1], 3) if pa['lcp'][1] else 0,
-                    'ttfb': round(pa['ttfb'][0] / pa['ttfb'][1], 3) if pa['ttfb'][1] else 0,
-                    'cls': round(pa['cls'][0] / pa['cls'][1], 3) if pa['cls'][1] else 0,
-                    'speed_index': round(pa['speed_index'][0] / pa['speed_index'][1], 3) if pa['speed_index'][1] else 0,
-                })
-            ptmp.sort(key=lambda x: -x['views'])
-            perf_pages = ptmp[:15]
-            # 逐设备汇总
-            for dev, d in perf_by_device.items():
-                dev_pages = []
-                for (sk, path), pa in d['pacc'].items():
+            try:
+                c.execute(
+                    "SELECT site, path, meta, device FROM visible_events WHERE site IN (%s) AND type='perf' AND ts>=? AND ts<?"
+                    % ph, sp + (start_ms, end_ms))
+                all_values = {k: [] for k in _PERF_KEYS}  # 用于计算整体 p75
+                perf_event_count = 0
+                pacc = {}  # key: (site, path)
+                for r in c.fetchall():
+                    perf_event_count += 1
+                    site_k = (r[0] or '').strip().lower()
+                    path = r[1] or '/'
+                    dev = (r[3] or '未知')
+                    try:
+                        m = json.loads(r[2]) if r[2] else {}
+                    except Exception:
+                        m = {}
+                    if not isinstance(m, dict):
+                        continue
+                    # 先统一归一化（处理 ms 误存、过滤极端异常值），后续聚合均用归一化后的值
+                    norm = {k: _normalize_perf(k, m.get(k)) for k in _PERF_KEYS}
+                    for k in _PERF_KEYS:
+                        v = norm[k]
+                        if v is not None:
+                            all_values[k].append(v)
+                    sp_key = (site_k, path)
+                    pa = pacc.setdefault(sp_key, {k: [0, 0] for k in _PERF_KEYS})
+                    pa['views'] = pa.get('views', 0) + 1
+                    for k in _PERF_KEYS:
+                        v = norm[k]
+                        if v is not None:
+                            pa[k][0] += v
+                            pa[k][1] += 1
+                    # 按设备分组聚合
+                    if dev not in perf_by_device:
+                        perf_by_device[dev] = {'values': {k: [] for k in _PERF_KEYS}, 'pacc': {}, 'count': 0}
+                    d = perf_by_device[dev]
+                    d['count'] += 1
+                    for k in _PERF_KEYS:
+                        v = norm[k]
+                        if v is not None:
+                            d['values'][k].append(v)
+                    dpa = d['pacc'].setdefault(sp_key, {k: [0, 0] for k in _PERF_KEYS})
+                    dpa['views'] = dpa.get('views', 0) + 1
+                    for k in _PERF_KEYS:
+                        v = norm[k]
+                        if v is not None:
+                            dpa[k][0] += v
+                            dpa[k][1] += 1
+                # 整体与设备汇总使用 p75（与 PageSpeed Insights 字段数据对齐，比均值更抗极端值）
+                perf_overall = {k: _p75(all_values[k]) for k in _PERF_KEYS}
+                ptmp = []
+                for (sk, path), pa in pacc.items():
                     if pa['views'] < 1:
                         continue
-                    dev_pages.append({
+                    ptmp.append({
                         'site': sk, 'path': path, 'views': pa['views'],
                         'fcp': round(pa['fcp'][0] / pa['fcp'][1], 3) if pa['fcp'][1] else 0,
                         'lcp': round(pa['lcp'][0] / pa['lcp'][1], 3) if pa['lcp'][1] else 0,
@@ -1597,124 +1625,139 @@ class StatEngine(object):
                         'cls': round(pa['cls'][0] / pa['cls'][1], 3) if pa['cls'][1] else 0,
                         'speed_index': round(pa['speed_index'][0] / pa['speed_index'][1], 3) if pa['speed_index'][1] else 0,
                     })
-                dev_pages.sort(key=lambda x: -x['views'])
-                perf_by_device[dev] = {
-                    'summary': {k: _p75(d['values'][k]) for k in _PERF_KEYS},
-                    'pages': dev_pages[:15],
-                    'count': d['count'],
-                }
-        except Exception as e:
-            self._log('get_stats perf ERROR: %s' % e)
+                ptmp.sort(key=lambda x: -x['views'])
+                perf_pages = ptmp[:15]
+                # 逐设备汇总
+                for dev, d in perf_by_device.items():
+                    dev_pages = []
+                    for (sk, path), pa in d['pacc'].items():
+                        if pa['views'] < 1:
+                            continue
+                        dev_pages.append({
+                            'site': sk, 'path': path, 'views': pa['views'],
+                            'fcp': round(pa['fcp'][0] / pa['fcp'][1], 3) if pa['fcp'][1] else 0,
+                            'lcp': round(pa['lcp'][0] / pa['lcp'][1], 3) if pa['lcp'][1] else 0,
+                            'ttfb': round(pa['ttfb'][0] / pa['ttfb'][1], 3) if pa['ttfb'][1] else 0,
+                            'cls': round(pa['cls'][0] / pa['cls'][1], 3) if pa['cls'][1] else 0,
+                            'speed_index': round(pa['speed_index'][0] / pa['speed_index'][1], 3) if pa['speed_index'][1] else 0,
+                        })
+                    dev_pages.sort(key=lambda x: -x['views'])
+                    perf_by_device[dev] = {
+                        'summary': {k: _p75(d['values'][k]) for k in _PERF_KEYS},
+                        'pages': dev_pages[:15],
+                        'count': d['count'],
+                    }
+            except Exception as e:
+                self._log('get_stats perf ERROR: %s' % e)
 
-        # ===== 流量异常告警（当前区间 vs 上一等长区间）=====
-        anomaly = {'level': 'ok', 'type': '', 'cur_pv': total_pv, 'prev_pv': 0, 'ratio': 0}
-        try:
-            span = end_ms - start_ms
-            if span > 0:
+            # ===== 流量异常告警（当前区间 vs 上一等长区间）=====
+            anomaly = {'level': 'ok', 'type': '', 'cur_pv': total_pv, 'prev_pv': 0, 'ratio': 0}
+            try:
+                span = end_ms - start_ms
+                if span > 0:
+                    p_start = start_ms - span
+                    p_end = start_ms
+                    prow = c.execute(
+                        "SELECT COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
+                        % ph, sp + (p_start, p_end)).fetchone()
+                    prev_pv = prow[0] or 0
+                    anomaly['prev_pv'] = prev_pv
+                    if prev_pv > 0 and total_pv > 0:
+                        ratio = total_pv / float(prev_pv)
+                        anomaly['ratio'] = round(ratio, 2)
+                        if ratio >= 1.8:
+                            anomaly['level'] = 'warn'
+                            anomaly['type'] = 'spike'
+                        elif ratio <= 0.55:
+                            anomaly['level'] = 'warn'
+                            anomaly['type'] = 'drop'
+            except Exception as e:
+                self._log('get_stats anomaly ERROR: %s' % e)
+
+            # ===== 上一周期对比（环比）：本期 vs 上一个等长周期 =====
+            prev = {'pv': 0, 'uv': 0, 'sessions': 0, 'bounce': 0.0,
+                    'avg_duration': 0, 'ppv': 0.0, 'daily_prev': []}
+            try:
+                span = end_ms - start_ms
                 p_start = start_ms - span
                 p_end = start_ms
-                prow = c.execute(
-                    "SELECT COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
-                    % ph, sp + (p_start, p_end)).fetchone()
-                prev_pv = prow[0] or 0
-                anomaly['prev_pv'] = prev_pv
-                if prev_pv > 0 and total_pv > 0:
-                    ratio = total_pv / float(prev_pv)
-                    anomaly['ratio'] = round(ratio, 2)
-                    if ratio >= 1.8:
-                        anomaly['level'] = 'warn'
-                        anomaly['type'] = 'spike'
-                    elif ratio <= 0.55:
-                        anomaly['level'] = 'warn'
-                        anomaly['type'] = 'drop'
-        except Exception as e:
-            self._log('get_stats anomaly ERROR: %s' % e)
 
-        # ===== 上一周期对比（环比）：本期 vs 上一个等长周期 =====
-        prev = {'pv': 0, 'uv': 0, 'sessions': 0, 'bounce': 0.0,
-                'avg_duration': 0, 'ppv': 0.0, 'daily_prev': []}
-        try:
-            span = end_ms - start_ms
-            p_start = start_ms - span
-            p_end = start_ms
+                def _bounds_list(gran, s_ms, e_ms):
+                    out = []
+                    if gran == 'hour':
+                        cur = datetime.fromtimestamp(s_ms / 1000, tz=TZ_BEIJING)
+                        endd = datetime.fromtimestamp(e_ms / 1000, tz=TZ_BEIJING)
+                        while cur < endd:
+                            out.append(self._hour_bounds(cur.strftime('%Y-%m-%d %H')))
+                            cur += timedelta(hours=1)
+                    else:
+                        cur = datetime.fromtimestamp(s_ms / 1000, tz=TZ_BEIJING)
+                        endd = datetime.fromtimestamp(e_ms / 1000, tz=TZ_BEIJING)
+                        while cur < endd:
+                            out.append(self._bj_day_bounds(cur.strftime('%Y-%m-%d')))
+                            cur += timedelta(days=1)
+                    return out
 
-            def _bounds_list(gran, s_ms, e_ms):
-                out = []
-                if gran == 'hour':
-                    cur = datetime.fromtimestamp(s_ms / 1000, tz=TZ_BEIJING)
-                    endd = datetime.fromtimestamp(e_ms / 1000, tz=TZ_BEIJING)
-                    while cur < endd:
-                        out.append(self._hour_bounds(cur.strftime('%Y-%m-%d %H')))
-                        cur += timedelta(hours=1)
-                else:
-                    cur = datetime.fromtimestamp(s_ms / 1000, tz=TZ_BEIJING)
-                    endd = datetime.fromtimestamp(e_ms / 1000, tz=TZ_BEIJING)
-                    while cur < endd:
-                        out.append(self._bj_day_bounds(cur.strftime('%Y-%m-%d')))
-                        cur += timedelta(days=1)
-                return out
-
-            daily_prev = []
-            for (b0, b1) in _bounds_list(granularity, p_start, p_end):
-                row = c.execute(
+                daily_prev = []
+                for (b0, b1) in _bounds_list(granularity, p_start, p_end):
+                    row = c.execute(
+                        "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
+                        "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
+                        sp + (b0, b1)).fetchone()
+                    daily_prev.append({'pv': row[0] or 0, 'uv': row[1] or 0})
+                p_tot = c.execute(
                     "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
                     "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                    sp + (b0, b1)).fetchone()
-                daily_prev.append({'pv': row[0] or 0, 'uv': row[1] or 0})
-            p_tot = c.execute(
-                "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                sp + (p_start, p_end)).fetchone()
-            prev_pv = p_tot[0] or 0
-            prev_uv = p_tot[1] or 0
-            p_bounced = c.execute(
-                "SELECT COUNT(*) FROM (SELECT session FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
-                "GROUP BY session HAVING COUNT(*)=1)" % ph, sp + (p_start, p_end)).fetchone()[0] or 0
-            p_sessions = c.execute(
-                "SELECT COUNT(DISTINCT session) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                sp + (p_start, p_end)).fetchone()[0] or 0
-            prev_bounce = round(100.0 * p_bounced / p_sessions, 1) if p_sessions else 0
-            p_avg = c.execute(
-                "SELECT AVG(d) FROM (SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-                "GROUP BY session)" % ph, sp + (p_start, p_end)).fetchone()
-            prev_avg = int(round(p_avg[0] or 0))
-            prev['pv'] = prev_pv
-            prev['uv'] = prev_uv
-            prev['sessions'] = p_sessions
-            prev['bounce'] = prev_bounce
-            prev['avg_duration'] = prev_avg
-            prev['ppv'] = round(prev_pv / prev_uv, 2) if prev_uv else 0
-            prev['daily_prev'] = daily_prev
-        except Exception as e:
-            self._log('get_stats prev ERROR: %s' % e)
+                    sp + (p_start, p_end)).fetchone()
+                prev_pv = p_tot[0] or 0
+                prev_uv = p_tot[1] or 0
+                p_bounced = c.execute(
+                    "SELECT COUNT(*) FROM (SELECT session FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? "
+                    "GROUP BY session HAVING COUNT(*)=1)" % ph, sp + (p_start, p_end)).fetchone()[0] or 0
+                p_sessions = c.execute(
+                    "SELECT COUNT(DISTINCT session) FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
+                    sp + (p_start, p_end)).fetchone()[0] or 0
+                prev_bounce = round(100.0 * p_bounced / p_sessions, 1) if p_sessions else 0
+                p_avg = c.execute(
+                    "SELECT AVG(d) FROM (SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                    "GROUP BY session)" % ph, sp + (p_start, p_end)).fetchone()
+                prev_avg = int(round(p_avg[0] or 0))
+                prev['pv'] = prev_pv
+                prev['uv'] = prev_uv
+                prev['sessions'] = p_sessions
+                prev['bounce'] = prev_bounce
+                prev['avg_duration'] = prev_avg
+                prev['ppv'] = round(prev_pv / prev_uv, 2) if prev_uv else 0
+                prev['daily_prev'] = daily_prev
+            except Exception as e:
+                self._log('get_stats prev ERROR: %s' % e)
 
-        conn.close()
-        return {
-            'site': site, 'root': self._domain_root(site), 'sites': sites,
-            'days': days, 'range_label': range_label, 'granularity': granularity,
-            'daily': daily,
-            'total_pv': total_pv, 'total_uv': total_uv, 'total_sessions': sessions,
-            'bounce': bounce, 'avg_duration': avg_duration,
-            'pages': pages, 'referrer': referrer, 'sources': sources,
-            'subdomains': subdomains,
-            'device': device, 'browser': browser, 'os': os_dist,
-            'geo_tree': geo_tree, 'countries': geo_tree,
-            'geo_enabled': self.geo_enabled(),
-            'maxminddb_available': self.maxminddb_available(),
-            # 新增指标
-            'online': online,
-            'new_returning': nr,
-            'landing_pages': landing_pages,
-            'exit_pages': exit_pages,
-            'depth_distribution': depth_distribution,
-            'page_dwell': page_dwell,
-            'perf_overall': perf_overall,
-            'perf_count': perf_event_count,
-            'perf_pages': perf_pages,
-            'perf_by_device': perf_by_device,
-            'anomaly': anomaly,
-            'prev': prev,
-        }
+            return {
+                'site': site, 'root': self._domain_root(site), 'sites': sites,
+                'days': days, 'range_label': range_label, 'granularity': granularity,
+                'daily': daily,
+                'total_pv': total_pv, 'total_uv': total_uv, 'total_sessions': sessions,
+                'bounce': bounce, 'avg_duration': avg_duration,
+                'pages': pages, 'referrer': referrer, 'sources': sources,
+                'subdomains': subdomains,
+                'device': device, 'browser': browser, 'os': os_dist,
+                'geo_tree': geo_tree, 'countries': geo_tree,
+                'geo_enabled': self.geo_enabled(),
+                'maxminddb_available': self.maxminddb_available(),
+                # 新增指标
+                'online': online,
+                'new_returning': nr,
+                'landing_pages': landing_pages,
+                'exit_pages': exit_pages,
+                'depth_distribution': depth_distribution,
+                'page_dwell': page_dwell,
+                'perf_overall': perf_overall,
+                'perf_count': perf_event_count,
+                'perf_pages': perf_pages,
+                'perf_by_device': perf_by_device,
+                'anomaly': anomaly,
+                'prev': prev,
+            }
 
     def get_visitors(self, site, days=30, range_str=None, visitor_limit=200, event_limit=3000,
                      source=None, refdomain=None, inquiry=None):

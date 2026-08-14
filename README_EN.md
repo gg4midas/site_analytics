@@ -19,6 +19,16 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.4 (2026-08-14)
+- **Performance & robustness optimization (P1 + remaining P2, single-file zero-dependency, DB zero-migration)**:
+  - **P1-1 De-N+1 trend aggregation**: `get_stats` now issues a single `GROUP BY strftime(...)` query instead of a per-hour / per-day loop — 24h goes from 24 queries to 1, 7-day hourly from 168 to 1; Dashboard refresh load drops by an order of magnitude.
+  - **P1-2 Stats TTL cache**: in-process 45s cache (key = site + range); auto-refresh / multiple tabs no longer recompute 30+ aggregation SQL each time. Cache is invalidated immediately on visitor block / unblock / datacenter refill so figures stay accurate.
+  - **P1-3 Leak-proof connections**: `get_stats` now uses the `_conn_cursor()` context manager (`with`), guaranteeing connection close on exception paths and preventing handle leaks under concurrency.
+  - **P1-4 Composite index**: added `idx_events_site_type_ts(site, type, ts)` covering the dominant `WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?` query so the range fully uses the index.
+  - **P2-3 Anti-join view**: `visible_events` rewritten from `NOT IN (SELECT ...)` to a `LEFT JOIN ... WHERE bv.visitor IS NULL` anti-join, so statistics no longer re-run the subquery per row as the blocked list grows.
+  - **P2-4 Site-list cache**: `get_sites` gains a 30s TTL cache, invalidated on site add / delete.
+  - **Frontend**: visitor table renders in chunks (80 rows per batch + "Load more") to avoid freezing on 500-row renders; new top-bar "Export CSV" button exports trends / sources / pages / devices / geo / visitors to an Excel-friendly UTF-8 CSV.
+
 ### v1.4.3 (2026-08-14)
 - **Backend reliability hardening (P0, production-critical, zero-dependency / DB-compatible)**:
   - **P0-1 SQLite concurrent writes**: `_conn()` now enables `WAL` journal mode + `busy_timeout=5000` + `synchronous=NORMAL` by default, eliminating `database is locked` under concurrency that previously caused **silent event loss** on tracker ingestion; existing `events.db` is reused as-is with zero migration risk.
