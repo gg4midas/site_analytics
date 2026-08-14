@@ -354,6 +354,7 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
     </div>
     <div class="section card">
       <div class="ct" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span data-i18n="访客会话">访客会话</span> <span class="pill" id="visitorCount"></span>
+        <div class="ctrl"><select id="visitorSourceSel" onchange="onVisitorSourceChange()" data-i18n-attr="title:按来源筛选访客"><option value="" data-i18n="全部来源">全部来源</option></select></div>
         <span id="suspectChip" class="filter-chip" style="display:none;background:rgba(224,96,58,.12);border-color:rgba(224,96,58,.4);color:#e0603a"></span>
         <span id="filterChip" class="filter-chip" style="display:none"></span>
         <span id="inquiryChip" class="inquiry-chip" style="display:none"></span>
@@ -606,6 +607,7 @@ var I18N_EN = {
 '访问页面（{n} 个不同页面 · 共 {m} 次动作）':'Visited pages ({n} distinct · {m} actions)',
 '路径':'Path','最后访问':'Last visit',
 '上期':'Prev','日期':'Date','新访客':'New','回访客':'Returning','来源类型':'Source Type','来源域名':'Referrer Domain','访问量':'Pageviews',
+'全部来源':'All sources','按来源筛选访客':'Filter visitors by source',
 '暂无被屏蔽的访客。':'No blocked visitors.',
 '恢复失败：':'Restore failed: ','未知错误':'Unknown error','未知':'Unknown','请求失败，请重试':'Request failed, please retry',
 '该窗口内暂无访问记录':'No visits in this window',
@@ -725,6 +727,7 @@ function switchLang(lang){
   else if(currentSite){ loadData(); }
   else { loadSites(); }
   applyThemeAttr();
+  populateVisitorSourceFilter();
 }
 var ECHARTS_OK = (typeof echarts !== 'undefined');
 var currentTheme = (localStorage.getItem('sa_theme') || 'light');
@@ -1934,7 +1937,7 @@ function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
 }
 
-// ===== 来源筛选（点击来源类型/域名，按统一来源类型筛选访客，而非跳转）=====
+// ===== 来源筛选（来源页锚点 + 访客标签下拉，均按统一来源类型筛选访客）=====
 var activeFilter = null;  // {kind:'source'|'refdomain', value, label}
 function filterAnchor(kind, value, label){
   return '<a class="filter-link" href="javascript:void(0)" data-kind="'+escapeHtml(kind)+'" '+
@@ -1950,11 +1953,60 @@ function applyFilter(kind, value, label){
   safeCall(loadVisitors);
   safeCall(function(){ loadRecent(true); });
 }
-function clearFilter(){
-  activeFilter = null;
+// 访客标签下拉筛选（已在访客标签内，不切标签）
+function setSourceFilter(kind, value, label){
+  activeFilter = {kind:kind, value:value, label:label};
   renderFilterChip();
   safeCall(loadVisitors);
   safeCall(function(){ loadRecent(true); });
+}
+function clearFilter(){
+  activeFilter = null;
+  renderFilterChip();
+  populateVisitorSourceFilter();
+  safeCall(loadVisitors);
+  safeCall(function(){ loadRecent(true); });
+}
+// 用来源类型 / 来源域名填充访客标签下拉，并反映当前选中态
+function populateVisitorSourceFilter(){
+  var sel = document.getElementById('visitorSourceSel');
+  if(!sel) return;
+  var d = window.__lastStats || {};
+  var sources = d.sources || [];
+  var referrer = d.referrer || [];
+  var cur = activeFilter ? (activeFilter.kind+':'+activeFilter.value) : '';
+  var html = '<option value="" data-i18n="全部来源">'+escapeHtml(t('全部来源'))+'</option>';
+  if(sources.length){
+    html += '<optgroup label="'+escapeHtml(t('来源类型'))+'">';
+    for(var i=0;i<sources.length;i++){
+      var s = sources[i];
+      var key = 'source:'+s.category;
+      html += '<option value="'+escapeHtml(key)+'"'+(key===cur?' selected':'')+'>'+escapeHtml(t(s.label))+'</option>';
+    }
+    html += '</optgroup>';
+  }
+  if(referrer.length){
+    html += '<optgroup label="'+escapeHtml(t('来源域名'))+'">';
+    for(var j=0;j<referrer.length;j++){
+      var r = referrer[j];
+      var key2 = 'refdomain:'+r.name;
+      html += '<option value="'+escapeHtml(key2)+'"'+(key2===cur?' selected':'')+'>'+escapeHtml(r.name)+'</option>';
+    }
+    html += '</optgroup>';
+  }
+  sel.innerHTML = html;
+}
+function onVisitorSourceChange(){
+  var sel = document.getElementById('visitorSourceSel');
+  if(!sel) return;
+  var v = sel.value;
+  if(!v){ clearFilter(); return; }
+  var idx = v.indexOf(':');
+  if(idx < 0){ clearFilter(); return; }
+  var kind = v.substring(0, idx);
+  var val = v.substring(idx+1);
+  var label = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : val;
+  setSourceFilter(kind, val, label);
 }
 function renderFilterChip(){
   var chip = document.getElementById('filterChip');
@@ -2013,6 +2065,7 @@ function switchTab(tab){
     liveTimer=setInterval(function(){ if(!autoRefreshPaused) loadRecent(true); }, 15000);
   } else if(tab==='visitors'){
     loadVisitors();
+    populateVisitorSourceFilter();
     visitorTimer=setInterval(function(){ if(!autoRefreshPaused) loadVisitors(); }, 30000);
   } else {
     loadData(tab);

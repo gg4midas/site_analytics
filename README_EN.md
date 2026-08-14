@@ -19,6 +19,9 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.6 (2026-08-14)
+- **Add source filter to the Visitors tab**: the Visitors list header now has a "Filter by source" dropdown so you can filter visitors directly by source type (search / AI / social / external link / direct) or by referrer domain — no need to jump to the Sources tab and click an anchor. Options are generated from the current site's data and stay in sync with the Sources-tab anchors, the filter chip, and the clear button. Chinese and English UIs are both supported.
+
 ### v1.4.5 (2026-08-14)
 - **Remove CSV export, clean up changelog**: removed the top-bar "Export CSV" button (deemed to have no real use case after review); also dropped the internal optimization-item numbers from the version notes in favor of plain feature descriptions.
 
