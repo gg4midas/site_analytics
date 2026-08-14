@@ -39,6 +39,11 @@ a{color:var(--accent);text-decoration:none}
 .btn{background:var(--accent);color:#04121c;border:none;border-radius:7px;padding:8px 16px;
   font-size:13px;font-weight:600;cursor:pointer}
 .btn:hover{filter:brightness(1.08)}
+/* 顶栏控件统一高度与对齐：站点选择 / 添加站点 / 日期 / 语言 / 主题 */
+.topbar .ctrl select,.topbar .ctrl input,.topbar .btn{height:36px;display:inline-flex;align-items:center;justify-content:center;line-height:1;box-sizing:border-box}
+.topbar .ctrl select,.topbar .ctrl input{padding:0 12px;font-size:13px}
+.topbar .btn{padding:0 16px;font-size:13px;font-weight:600}
+.topbar .custom-range{display:inline-flex;align-items:center;gap:8px}
 .nav{display:flex;justify-content:space-between;align-items:center;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px;overflow-x:auto}
 .nav-left{display:flex;gap:2px;flex-wrap:nowrap}
 .nav-right{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:0 6px 6px 12px}
@@ -171,8 +176,10 @@ tr:hover td{background:rgba(31,156,240,.06)}
 .mini.arrow{padding:6px 9px;line-height:1}
 .mini:disabled{opacity:.35;cursor:not-allowed}
 .mini:disabled:hover{border-color:var(--border2)}
-.code-box{display:flex;gap:8px;align-items:stretch}
-.code-box pre{flex:1;margin:0;background:#0a0e16;border:1px solid var(--border);border-radius:7px;padding:10px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--accent2);white-space:pre-wrap;word-break:break-all}
+.code-box{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+.code-box pre{margin:0;background:#0a0e16;border:1px solid var(--border);border-radius:7px;padding:10px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--accent2);white-space:pre-wrap;word-break:break-all}
+.code-actions{display:flex;flex-direction:column;gap:8px}
+.code-actions .mini{width:100%}
 .mini{background:var(--panel3);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap}
 .mini:hover{border-color:var(--accent)}
 .mini.danger{color:var(--down);border-color:rgba(248,81,73,.4)}
@@ -182,7 +189,7 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
 .custom-range input[type=date]{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:13px;outline:none;font-family:inherit}
 .custom-range input[type=date]:focus{border-color:var(--accent)}
 .custom-range .range-sep{color:var(--muted);font-size:13px}
-.custom-range .btn{padding:5px 12px;font-size:12px}
+.custom-range .btn{font-size:13px}
 .alert{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;margin-bottom:16px;font-size:13px;line-height:1.5}
 .alert-up{background:rgba(31,156,240,.12);border:1px solid rgba(31,156,240,.4)}
 .alert-down{background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.4)}
@@ -237,7 +244,7 @@ code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;p
         <button class="btn" onclick="applyCustomRange()" data-i18n="应用">应用</button>
       </span>
     </div>
-    <button class="btn ghost mini" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
+    <button class="btn ghost" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
     <button class="btn ghost" id="btnTheme" onclick="toggleTheme()">深色</button>
   </div>
 
@@ -2104,10 +2111,11 @@ function renderManagedSites(){
       +'</div></div>'
       +'<div class="code-box" style="margin-top:10px">'
       +'<pre id="scode_'+i+'">'+escapeHtml(buildEmbedCode(s.site_key))+'</pre>'
+      +'<div class="code-actions">'
       +'<button class="mini" onclick="copyText(\'scode_'+i+'\')">'+t('复制埋点代码')+'</button>'
       +(s.site_key ? '' : '<button class="mini" onclick="regenSiteKey('+i+')">'+t('启用令牌')+'</button>')
       +'<button class="mini" onclick="regenSiteKey('+i+')">'+t('重新生成令牌')+'</button>'
-      +'</div></div>';
+      +'</div></div></div>';
   }
   el.innerHTML=h;
 }

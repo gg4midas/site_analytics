@@ -7,6 +7,8 @@
         而此刻页面里没有外部 src（只有这段内联 loader），所以插件无从本地化/合并；
         等插件输出阶段结束、脚本运行时再去拉远程 tracker.js，插件早已看不到它。
   多语言（WPML）：不要写 data-site，tracker 自动用当前域名区分 www/de/fr。
+  若该站点已在面板启用部署令牌，请从「站点管理」复制含 data-id 的代码，
+  或在此手动加上 s.setAttribute('data-id','你的站点令牌');
   把「你的分析域名」替换为实际部署了 tracker.js + /api/event 的域名。
 -->
 <script>

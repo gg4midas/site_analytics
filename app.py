@@ -16,7 +16,7 @@
 - 访客地域分布（国家 / 城市，需配置 GeoLite2；缺失则自动禁用，不影响其它功能）
 - SQLite 事件存储，按天聚合
 - 公开上报端点（/api/event，CORS 开放），查询接口可选 token 鉴权
-- 部署令牌（可选）：设环境变量 SA_DEPLOY_KEY 后，tracker 须随 data-key 上报正确令牌，否则拒绝（防脚本被盗用后在高流量站点产生服务器压力；详见 README「部署令牌」）
+- 部署令牌（可选）：每站点独立令牌由面板「添加站点」自动生成并注入埋点代码，服务端落库前校验；老站点可在面板「重新生成令牌」启用。也支持全局兜底令牌 SA_DEPLOY_KEY / --deploy-key 与严格模式 --require-key。
 - 自动剔除 webdriver / 已知爬虫 UA
 - 反向代理下通过 X-Forwarded-For / X-Real-IP 还原真实访客 IP
 """
@@ -45,7 +45,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
