@@ -19,6 +19,14 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.7 (2026-08-18)
+- **License copyright update + several bug fixes**:
+  - **LICENSE copyright owner** changed from "site_analytics contributors" to "运营GO (https://iyygo.com)".
+  - **Fixed the trend chart rendering completely empty on UTC / non-UTC+8 servers**: statistics bucketing now uses the configured timezone offset (`'+%d seconds'`), consistent with the Python-side `TZ_BEIJING`, instead of SQLite `'localtime'` which reads the OS timezone.
+  - **Fixed the "Last 2 days" range mislabeled as "2 days ago"**: the backend range label, the frontend dropdown, and the English copy are now unified as "过去 2 天 / Last 2 days".
+  - **Fixed blocked-visitors list returning all records by overreach**: when a root domain with no sub-domains is passed, it no longer returns every blocked record (now returns an empty list).
+  - **Corrected a misleading comment on potential-inquiry visitors** (it is OR semantics: matching any source keyword marks a potential lead).
+
 ### v1.4.6 (2026-08-14)
 - **Add source filter to the Visitors tab**: the Visitors list header now has a "Filter by source" dropdown so you can filter visitors directly by source type (search / AI / social / external link / direct) or by referrer domain — no need to jump to the Sources tab and click an anchor. Options are generated from the current site's data and stay in sync with the Sources-tab anchors, the filter chip, and the clear button. Chinese and English UIs are both supported.
 
