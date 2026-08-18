@@ -575,7 +575,7 @@ var I18N_EN = {
 '面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。':'Panel token invalid: append ?token=YOUR_TOKEN to the URL, or remove --token when starting app.py.',
 '暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。':'No site data yet. Embed the tracker.js snippet on your pages; data refreshes once real visits occur.',
 '获取站点失败：':'Failed to load sites: ',
-'今天':'Today','昨天':'Yesterday','2天之前':'2 days ago','过去7天':'Last 7 days','过去14天':'Last 14 days','过去28天':'Last 28 days','过去60天':'Last 60 days','过去90天':'Last 90 days','自定义日期范围':'Custom range',
+'今天':'Today','昨天':'Yesterday','过去2天':'Last 2 days','过去7天':'Last 7 days','过去14天':'Last 14 days','过去28天':'Last 28 days','过去60天':'Last 60 days','过去90天':'Last 90 days','自定义日期范围':'Custom range',
 '{y}-{m}':'{y}-{m}',
 '请选择开始和结束日期':'Please select start and end date',
 '正在加载统计数据…':'Loading stats…',
@@ -1011,7 +1011,7 @@ function presetOptions(){
   var presets = [
     {label:t('今天'), value:'today'},
     {label:t('昨天'), value:'yesterday'},
-    {label:t('2天之前'), value:'2days'},
+    {label:t('过去2天'), value:'2days'},
     {label:t('过去7天'), value:'7days'},
     {label:t('过去14天'), value:'14days'},
     {label:t('过去28天'), value:'28days'},

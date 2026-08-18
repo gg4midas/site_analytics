@@ -514,7 +514,7 @@ class StatEngine(object):
         if rs == '2days':
             s = StatEngine._bj_day_bounds((today - timedelta(days=1)).isoformat())[0]
             e = int(now_bj.timestamp() * 1000)
-            return s, e, '2天之前', 'hour'
+            return s, e, '过去2天', 'hour'
         m = re.match(r'^month:(\d{4})-(\d{2})$', rs)
         if m:
             y, mon = int(m.group(1)), int(m.group(2))
@@ -1253,9 +1253,8 @@ class StatEngine(object):
                         "SELECT visitor, site, reason, isp, asn, created FROM blocked_visitors "
                         "WHERE site IN (%s) OR site='' ORDER BY created DESC" % ph, tuple(sites)).fetchall()
                 else:
-                    rows = conn.execute(
-                        "SELECT visitor, site, reason, isp, asn, created FROM blocked_visitors "
-                        "ORDER BY created DESC").fetchall()
+                    # 传入主域但库中没有其下任何子域：无站点级屏蔽记录可返回
+                    rows = []
             else:
                 rows = conn.execute(
                     "SELECT visitor, site, reason, isp, asn, created FROM blocked_visitors "
@@ -1317,6 +1316,10 @@ class StatEngine(object):
         sp = tuple(sites)
         # ===== 解析时间范围（东八区）=====
         start_ms, end_ms, range_label, granularity = self._parse_range(range_str, days)
+        # 统计分桶使用「配置时区」偏移（与 Python 侧 TZ_BEIJING、get_months 保持一致），
+        # 不再依赖 SQLite 'localtime'（后者取操作系统时区，部署在 UTC 容器/服务器上会导致
+        # 分桶标签与 Python 侧计算的 cur 不一致、趋势图整体为空）。
+        secs = int(round((getattr(self, '_tz_offset', 8.0)) * 3600))
 
         with self._conn_cursor() as c:
 
@@ -1324,9 +1327,9 @@ class StatEngine(object):
             if granularity == 'hour':
                 # P1-1：单条 GROUP BY 替代逐小时 N+1 查询（SQLite 完成分桶）
                 hrows = c.execute(
-                    "SELECT strftime('%%Y-%%m-%%d %%H', ts/1000, 'unixepoch', 'localtime') h, "
+                    "SELECT strftime('%%Y-%%m-%%d %%H', ts/1000, 'unixepoch', '%+d seconds') h, "
                     "COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY h ORDER BY h" % ph,
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY h ORDER BY h" % (secs, ph),
                     sp + (start_ms, end_ms)).fetchall()
                 hmap = {r[0]: (r[1] or 0, r[2] or 0) for r in hrows}
                 trend = []
@@ -1343,9 +1346,9 @@ class StatEngine(object):
             else:
                 # 按天聚合（兼容旧字段名 daily）；P1-1：单条 GROUP BY 替代逐天 N+1
                 drows = c.execute(
-                    "SELECT strftime('%%Y-%%m-%%d', ts/1000, 'unixepoch', 'localtime') d, "
+                    "SELECT strftime('%%Y-%%m-%%d', ts/1000, 'unixepoch', '%+d seconds') d, "
                     "COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY d ORDER BY d" % ph,
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY d ORDER BY d" % (secs, ph),
                     sp + (start_ms, end_ms)).fetchall()
                 dmap = {r[0]: (r[1] or 0, r[2] or 0) for r in drows}
                 daily = []
@@ -1942,7 +1945,7 @@ class StatEngine(object):
                     del p['last_ms']
                 b['pages_list'] = plist
                 b['pages_count'] = len(plist)
-                # 潜在询盘访客标识：访问过产品页且访问过联系页
+                # 潜在询盘访客标识：访问过产品页 / 联系页等任一命中关键词即视为潜在询盘（OR 语义，见 _is_potential_inquiry）
                 b['is_inquiry'] = self._is_potential_inquiry(list(all_paths.keys()))
             # ===== 异常访客标注：多条件组合（支持多选）=====
             # 1) 单访客浏览量畸高：以全体访客 PV 中位数为基准，PV ≥ 中位数×倍数 且 ≥ 绝对下限。
