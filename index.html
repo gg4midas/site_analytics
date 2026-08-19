@@ -671,7 +671,13 @@ var I18N_EN = {
 '⑤ 统计时区':'⑤ Statistics Timezone',
 '按该时区聚合与展示「自然日 / 小时」维度（影响概览趋势、月份与日期标签）。默认东八区（UTC+8）。':'Aggregation and display of daily/hourly dimensions use this timezone (affects overview trend, months and date labels). Default: UTC+8.',
 '时区偏移（小时，相对 UTC，可带小数，范围 -12 ~ +14）':'Timezone offset (hours from UTC, decimals allowed, range -12 ~ +14)',
-'保存设置':'Save Settings','已保存设置。':'Settings saved.','恢复默认':'Restore Defaults'
+'保存设置':'Save Settings','已保存设置。':'Settings saved.','恢复默认':'Restore Defaults',
+'加载更多':'Load more',
+'已重新生成「{n}」的部署令牌，请用新代码重新嵌入。':'Regenerated deploy token for "{n}"; re-embed the new snippet.',
+'时区偏移应在 -12 ~ +14 之间':'Timezone offset must be between -12 and +14',
+'生成失败：':'Generation failed: ',
+'确定重新生成「{n}」的部署令牌？\n生成后须用新代码重新嵌入该站点，旧令牌立即失效。':'Regenerate the deploy token for "{n}"?\nAfter regeneration you must re-embed the new snippet; the old token is immediately invalidated.',
+'性能数据来自真实访客浏览器测量（RUM）；指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。TTFB 不含建连/TLS/重定向（系统性偏小）。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。':'Perf data is measured by real visitor browsers (RUM). Metrics (aligned with PageSpeed Insights field data): FCP First Contentful Paint, LCP Largest Contentful Paint, TTFB Time To First Byte, CLS Cumulative Layout Shift, Speed Index — all in seconds (CLS dimensionless). Top cards use the 75th percentile (p75, consistent with PSI), more robust to outliers than the mean; the table shows per-page means. Color thresholds: green=good / yellow=needs improvement / red=poor. Speed Index is a browser-estimated visual-completeness value (not Lighthouse frame-by-frame), for trend reference only. Aggregation filters outliers > 60s and CLS > 2. TTFB excludes connection/TLS/redirect (systematically low). Auto-refresh every 60s; pauses when expanding visitor details or opening a modal; click "Refresh" (top-right) to refresh manually.'
 };
 function t(k, sub){
   var s = (SA_LANG==='en' && I18N_EN[k]!=null) ? I18N_EN[k] : k;
@@ -797,10 +803,11 @@ function pct(cur, prev){
   var dir = d>0.5?'up':(d<-0.5?'down':'flat');
   return {v:(d>=0?'+':'')+d.toFixed(0)+'%', dir:dir};
 }
-function prevTip(v){
+function prevTip(v, fmt){
   if(v===undefined||v===null||v==='') return '';
   v=Number(v);
   if(isNaN(v)||v===0) return '';
+  if(fmt) return t('上期')+' '+fmt(v);
   if(v>=1) return t('上期')+' '+fmtNum(Math.round(v));
   return t('上期')+' '+v;
 }
@@ -1217,9 +1224,9 @@ function renderOverview(d){
   var kpis=[
     {label:t('独立访客'),val:fmtNum(d.total_uv),chg:chgPct(d.total_uv, prev.uv, true), sub:prevTip(prev.uv)},
     {label:t('浏览量（PV）'),val:fmtNum(d.total_pv),chg:chgPct(d.total_pv, prev.pv, true), sub:prevTip(prev.pv)},
-    {label:t('人均页面数'),val:perPV.toFixed(2),chg:chgPct(perPV, prevPpv, true), sub:prevTip(prevPpv)},
-    {label:t('平均停留'),val:fmtDuration(d.avg_duration),chg:chgPct(d.avg_duration, prev.avg_duration, true), sub:prevTip(prev.avg_duration)},
-    {label:t('跳出率'),val:d.bounce+'%',chg:chgPct(d.bounce, prev.bounce, false), sub:prevTip(prev.bounce)},
+    {label:t('人均页面数'),val:perPV.toFixed(2),chg:chgPct(perPV, prevPpv, true), sub:prevTip(prevPpv, function(x){return x.toFixed(2);})},
+    {label:t('平均停留'),val:fmtDuration(d.avg_duration),chg:chgPct(d.avg_duration, prev.avg_duration, true), sub:prevTip(prev.avg_duration, fmtDuration)},
+    {label:t('跳出率'),val:d.bounce+'%',chg:chgPct(d.bounce, prev.bounce, false), sub:prevTip(prev.bounce, function(x){return x.toFixed(1)+'%';})},
     {label:t('当前在线'),val:fmtNum(d.online||0),chg:{v:t('近5分钟'),dir:'flat'}},
   ];
   var html='';

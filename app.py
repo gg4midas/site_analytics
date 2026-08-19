@@ -62,7 +62,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.8"
+VERSION = "1.4.9"
 MAX_BODY = 64 * 1024  # 请求体上限 64KB：防慢速/超大体请求占满线程池（slowloris / DoS）
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
@@ -1451,10 +1451,10 @@ class StatEngine(object):
                 sp + (start_ms, end_ms)).fetchone()[0] or 0
             bounce = round(100.0 * bounced / sessions, 1) if sessions else 0
 
-            # 平均停留时长（按会话汇总 pagehide.duration）
+            # 平均停留时长（按会话汇总 pagehide.duration，会话级封顶 24h，防脏值拉偏均值）
             avg_row = c.execute(
                 "SELECT AVG(d) FROM ("
-                "SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                "SELECT session, MIN(SUM(MIN(duration,86400)),86400) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
                 "GROUP BY session)" % ph, sp + (start_ms, end_ms)).fetchone()
             avg_duration = int(round(avg_row[0] or 0))
 
@@ -1806,7 +1806,7 @@ class StatEngine(object):
                     sp + (p_start, p_end)).fetchone()[0] or 0
                 prev_bounce = round(100.0 * p_bounced / p_sessions, 1) if p_sessions else 0
                 p_avg = c.execute(
-                    "SELECT AVG(d) FROM (SELECT session, SUM(duration) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                    "SELECT AVG(d) FROM (SELECT session, MIN(SUM(MIN(duration,86400)),86400) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
                     "GROUP BY session)" % ph, sp + (p_start, p_end)).fetchone()
                 prev_avg = int(round(p_avg[0] or 0))
                 prev['pv'] = prev_pv
