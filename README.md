@@ -21,6 +21,12 @@
 
 ## 版本历史
 
+### v1.4.8（2026-08-19）
+- **16 项性能 / 安全 / 健壮性优化（P0×7 + P1×9）**：
+  - **P0 性能与安全**：修复 `get_visitors` 异常分支 `UnboundLocalError` 与 SQLite 连接泄漏（P0-A）；静态资源进程内字节缓存 + ETag/304 + Cache-Control（P0-B）；统计缓存 `_stats_cache` 由无界改为 OrderedDict + 全局锁 + LRU 上限 256（P0-C）；上一周期环比趋势由逐桶 N+1 改为单条 GROUP BY（P0-D）；`_sites_under_root` 全表扫描改为 30s TTL 缓存（P0-E）；CORS `*` 收口仅 `/api/event`（P0-F）；启动治理任务改后台守护线程，不再阻塞启动（P0-G）。
+  - **P1 健壮性**：落地来源相关子查询改 ROW_NUMBER() 窗口函数（P1-1）；block_visitor/unblock_visitor 与设置项变更清缓存加锁（P1-2/P1-3）；`add_event` 长度/visitor 校验 + 未来 ts 钳制为 now（P1-5）；`_check_token` 改用 `hmac.compare_digest` 常量时间比较（P1-6）；`/static/` 路径穿越防护 403（P1-7）；`auto_block_datacenter_visitors` 逐访客写入改 executemany 批量（P1-8）；新/回访客统计加 retention 时间下界（P1-9）；`duration` 上限 86400s（P1-10）。
+  - **验证**：自研回归脚本 30/30 通过；独立 QA 复验 30/0 通过、编译 OK；既有端到端套件 26/28（2 例非代码问题：超大 duration 现被上限拦截、面板令牌用例的端口绑定竞态）。
+
 ### v1.4.7（2026-08-18）
 - **开源协议版权更新 + 多项 bug 修复**：
   - **LICENSE 版权所有人**由「site_analytics contributors」更新为「运营GO (https://iyygo.com)」。

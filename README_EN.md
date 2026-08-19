@@ -19,6 +19,12 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 
 ## Version History
 
+### v1.4.8 (2026-08-19)
+- **16 performance / security / robustness optimizations (7 P0 + 9 P1)**:
+  - **P0 (performance & security)**: fixed `get_visitors` exception branch `UnboundLocalError` and SQLite connection leak (P0-A); in-process byte cache + ETag/304 + Cache-Control for static assets (P0-B); `_stats_cache` changed from unbounded to OrderedDict + global lock + LRU cap of 256 (P0-C); previous-period comparison trend changed from per-bucket N+1 to a single GROUP BY (P0-D); `_sites_under_root` full scan changed to a 30s TTL cache (P0-E); CORS `*` restricted to `/api/event` only (P0-F); startup maintenance tasks moved to a background daemon thread so they no longer block server start (P0-G).
+  - **P1 (robustness)**: landing-source correlated subquery changed to ROW_NUMBER() window function (P1-1); cache invalidation under lock for block/unblock visitor and setting changes (P1-2/P1-3); `add_event` length/visitor validation + future-ts clamped to now (P1-5); `_check_token` switched to `hmac.compare_digest` constant-time compare (P1-6); `/static/` path-traversal protection returns 403 (P1-7); `auto_block_datacenter_visitors` per-visitor writes changed to batched `executemany` (P1-8); new/returning visitor stats gained a retention lower-bound (P1-9); `duration` capped at 86400s (P1-10).
+  - **Verification**: in-house regression script 30/30; independent QA re-verification 30/0 with COMPILE_OK; existing end-to-end suite 26/28 (2 non-code issues: oversized duration is now capped, and a panel-token test's port-binding race).
+
 ### v1.4.7 (2026-08-18)
 - **License copyright update + several bug fixes**:
   - **LICENSE copyright owner** changed from "site_analytics contributors" to "运营GO (https://iyygo.com)".
