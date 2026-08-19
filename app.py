@@ -62,7 +62,11 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.9"
+VERSION = "1.4.10"
+
+# 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
+# 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
+STAY_CAP_SEC = 1800
 MAX_BODY = 64 * 1024  # 请求体上限 64KB：防慢速/超大体请求占满线程池（slowloris / DoS）
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
@@ -764,8 +768,8 @@ class StatEngine(object):
                     duration = 0
                 if duration < 0:
                     duration = 0
-                if duration > 86400:   # P1-10 / P1-5：停留时长上限 24h，防极端脏值拉偏均值
-                    duration = 86400
+                if duration > STAY_CAP_SEC:   # 单页停留上限 30 分钟（脚本/链接上报超时），防极端脏值
+                    duration = STAY_CAP_SEC
             device, browser, os_name = self.parse_ua(ua)
             ip = ev.get('ip') or ''
             geo = self.resolve_geo(ip)
@@ -1451,11 +1455,11 @@ class StatEngine(object):
                 sp + (start_ms, end_ms)).fetchone()[0] or 0
             bounce = round(100.0 * bounced / sessions, 1) if sessions else 0
 
-            # 平均停留时长（按会话汇总 pagehide.duration，会话级封顶 24h，防脏值拉偏均值）
+            # 平均停留时长（按会话汇总 pagehide.duration，单页与会话级均封顶 30 分钟，防脏值拉偏均值）
             avg_row = c.execute(
                 "SELECT AVG(d) FROM ("
-                "SELECT session, MIN(SUM(MIN(duration,86400)),86400) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-                "GROUP BY session)" % ph, sp + (start_ms, end_ms)).fetchone()
+                "SELECT session, MIN(SUM(MIN(duration,%d)),%d) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                "GROUP BY session)" % (STAY_CAP_SEC, STAY_CAP_SEC, ph), sp + (start_ms, end_ms)).fetchone()
             avg_duration = int(round(avg_row[0] or 0))
 
             def top(tbl_col, lim=15, src_col='path'):
@@ -1617,8 +1621,8 @@ class StatEngine(object):
             page_dwell = []
             try:
                 c.execute(
-                    "SELECT site, %s, AVG(duration), COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-                    "GROUP BY site, %s HAVING COUNT(*)>=1 ORDER BY COUNT(*) DESC LIMIT 15" % (_CLEAN_PATH_SQL, ph, _CLEAN_PATH_SQL),
+                    "SELECT site, %s, AVG(MIN(duration,%d)), COUNT(*) FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                    "GROUP BY site, %s HAVING COUNT(*)>=1 ORDER BY COUNT(*) DESC LIMIT 15" % (_CLEAN_PATH_SQL, STAY_CAP_SEC, ph, _CLEAN_PATH_SQL),
                     sp + (start_ms, end_ms))
                 page_dwell = [{'site': r[0] or '', 'path': r[1] or '/', 'avg': int(round(r[2] or 0)), 'views': r[3]} for r in c.fetchall()]
             except Exception as e:
@@ -1806,8 +1810,8 @@ class StatEngine(object):
                     sp + (p_start, p_end)).fetchone()[0] or 0
                 prev_bounce = round(100.0 * p_bounced / p_sessions, 1) if p_sessions else 0
                 p_avg = c.execute(
-                    "SELECT AVG(d) FROM (SELECT session, MIN(SUM(MIN(duration,86400)),86400) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
-                    "GROUP BY session)" % ph, sp + (p_start, p_end)).fetchone()
+                    "SELECT AVG(d) FROM (SELECT session, MIN(SUM(MIN(duration,%d)),%d) d FROM visible_events WHERE site IN (%s) AND type='pagehide' AND ts>=? AND ts<? "
+                    "GROUP BY session)" % (STAY_CAP_SEC, STAY_CAP_SEC, ph), sp + (p_start, p_end)).fetchone()
                 prev_avg = int(round(p_avg[0] or 0))
                 prev['pv'] = prev_pv
                 prev['uv'] = prev_uv
@@ -1994,7 +1998,7 @@ class StatEngine(object):
                             p['last_ms'] = ts
                         if ts < p['first_ms']:
                             p['first_ms'] = ts
-                b['duration_total'] += int(r[12] or 0)
+                b['duration_total'] += min(int(r[12] or 0), STAY_CAP_SEC)
                 b['event_count'] += 1
                 if r[5] and not b['referer']:
                     b['referer'] = r[5]
@@ -2086,7 +2090,7 @@ class StatEngine(object):
                 b['first_time'] = self._fmt_bj(b['first_time'])
                 b['last_time'] = self._fmt_bj(b['last_time'])
                 b['duration_text'] = self._fmt_duration(b['duration_total'])
-                b['duration_total'] = int(b.get('duration_total') or 0)
+                b['duration_total'] = min(int(b.get('duration_total') or 0), STAY_CAP_SEC)
                 b['actions_count'] = b['event_count']
                 b['pv'] = b['pv'] + len(b.get('hide_pages', {}))
                 b['pages_count'] = b.get('pages_count', len(b.get('pages_list', [])))
@@ -2186,7 +2190,7 @@ class StatEngine(object):
                     if path in b['hide_pages']:
                         del b['hide_pages'][path]
                 elif r[6] == 'pagehide':
-                    b['duration_total'] += int(r[5] or 0)
+                    b['duration_total'] += min(int(r[5] or 0), STAY_CAP_SEC)
                     path = _clean_path(r[2])
                     if path not in b['pages']:
                         b['hide_pages'][path] = b['hide_pages'].get(path, 0) + 1
@@ -2241,7 +2245,7 @@ class StatEngine(object):
                     'pages_count': len(all_pages),
                     'current_path': current_path,
                     'duration_text': self._fmt_duration(b['duration_total']),
-                    'duration_total': int(b.get('duration_total') or 0),
+                    'duration_total': min(int(b.get('duration_total') or 0), STAY_CAP_SEC),
                 })
             out.sort(key=lambda x: x['last_time'], reverse=True)
             return {'rows': out[:limit], 'online': online}
@@ -2557,7 +2561,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ('/', '/index.html'):
             idx = os.path.join(self.www_root, 'index.html')
-            self._send_file(idx, 'text/html; charset=utf-8')
+            # index.html 是前端主壳，升级后必须立即生效；关闭浏览器长缓存（每次请求都通过 ETag 重新验证）
+            self._send_file(idx, 'text/html; charset=utf-8', cache_seconds=0)
             return
 
         if path.startswith('/static/'):
