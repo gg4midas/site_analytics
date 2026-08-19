@@ -27,6 +27,8 @@ import json
 import sqlite3
 import ipaddress
 import traceback
+import threading
+import collections
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
@@ -34,11 +36,17 @@ import hmac
 import time
 from contextlib import contextmanager
 
-# 进程内 TTL 缓存（性能优化：get_stats / get_sites，见 P1-2 / P2-4）
-_stats_cache = {}      # key=(site, days, range_str) -> (expire_ts, payload)
-_sites_cache = {}      # key=("_sites",) -> (expire_ts, payload)
+# 进程内 TTL 缓存（性能优化：get_stats / get_sites / _sites_under_root，见 P0-C / P1-2 / P2-4）
+# 使用 OrderedDict + 全局锁实现线程安全与 LRU 淘汰，避免 ThreadingHTTPServer 多 worker 下的无界增长与竞态
+_stats_cache = collections.OrderedDict()        # key=(site, days, range_str) -> (expire_ts, payload)
+_sites_cache = collections.OrderedDict()        # key=("_sites",) -> (expire_ts, payload)
+_root_sites_cache = collections.OrderedDict()   # key=主域 -> (expire_ts, 该主域下全部子域列表)；_sites_under_root 缓存
+_stats_cache_lock = threading.Lock()            # 缓存读写锁（P0-C）
 STATS_CACHE_TTL = 45   # 统计结果缓存 45 秒（analytics 容忍数十秒延迟）
 SITES_CACHE_TTL = 30   # 站点列表缓存 30 秒
+STATS_CACHE_MAX = 256  # 统计缓存条目上限；超出按 LRU 淘汰（P0-C 防无界增长）
+ROOT_SITES_TTL = 30    # 主域->子域映射缓存 30 秒（P0-E，与站点列表同源变更失效）
+_file_cache = {}       # path -> (mtime, size, data) 进程内静态资源字节缓存（P0-B 避免每次全量读盘）
 
 # GeoIP 为可选能力：安装了 maxminddb 且提供 GeoLite2 mmdb 才启用，否则优雅降级
 try:
@@ -689,32 +697,43 @@ class StatEngine(object):
     @staticmethod
     def _landing_refs_sql(ph):
         """返回「每位访客落地来源 ref」的查询 SQL（以窗口内首条 pageview 的 referrer 为归属）。
-        不依赖 window 函数，兼容旧版 SQLite；同一访客多条首访并列时取 rowid 最小者，结果确定。"""
+        使用 ROW_NUMBER() 窗口函数（与落地/退出页一致），单条查询完成，避免相关子查询 N×1 回表（P1-1）。"""
         return (
-            "SELECT t.visitor,"
-            " (SELECT ref FROM visible_events v2 WHERE v2.visitor=t.visitor AND v2.site IN (%s)"
-            "   AND v2.type='pageview' AND v2.ts>=? AND v2.ts<? ORDER BY v2.ts ASC LIMIT 1) AS ref"
-            " FROM (SELECT DISTINCT visitor FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?) t"
-        ) % (ph, ph)
+            "SELECT visitor, ref FROM ("
+            "SELECT visitor, ref, ROW_NUMBER() OVER (PARTITION BY visitor ORDER BY ts ASC) rn "
+            "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
+            ") WHERE rn=1" % (ph,)
+        )
 
     # ---------------- 写入 ----------------
     def add_event(self, ev):
         """ev: dict，字段经校验后入库。返回 True/False。"""
         try:
             site = (ev.get('site') or '').strip().lower()
-            if not site:
+            if not site or len(site) > 253:   # P1-5：站点名长度上限，防异常超长字段
                 return False
             ua = ev.get('ua') or ''
             if self.is_bot(ua):
                 return False
             visitor = (ev.get('visitor') or '').strip()
-            if not visitor:
+            if not visitor or len(visitor) > 200:   # P1-5：访客标识长度上限
                 return False
             session = (ev.get('session') or visitor)
+            if len(session) > 200:   # P1-5：会话标识长度上限
+                session = session[:200]
             etype = ev.get('type') or 'pageview'
             if etype not in ('pageview', 'pagehide', 'perf'):
                 return False
-            ts = int(ev.get('ts') or (datetime.now().timestamp() * 1000))
+            # P1-5：ts 钳制（非数字 / 0 / 负数 / 未来偏移过大 一律回退到当前时间），避免脏时间戳污染统计
+            try:
+                ts = int(ev.get('ts') or 0)
+            except (ValueError, TypeError):
+                ts = 0
+            if ts <= 0:
+                ts = int(datetime.now().timestamp() * 1000)
+            now_ms = int(datetime.now().timestamp() * 1000)
+            if ts > now_ms + 5 * 60 * 1000:
+                ts = now_ms
             path = _clean_path(ev.get('path'))
             ref = (ev.get('ref') or '')[:300]
             lang = (ev.get('lang') or '')[:40]
@@ -745,6 +764,8 @@ class StatEngine(object):
                     duration = 0
                 if duration < 0:
                     duration = 0
+                if duration > 86400:   # P1-10 / P1-5：停留时长上限 24h，防极端脏值拉偏均值
+                    duration = 86400
             device, browser, os_name = self.parse_ua(ua)
             ip = ev.get('ip') or ''
             geo = self.resolve_geo(ip)
@@ -773,13 +794,17 @@ class StatEngine(object):
 
     # ---------------- 读取 ----------------
     def get_sites(self):
-        """返回主域去重排序列表（同一主域下的所有子域归并为一个主域条目）。P2-4：30s TTL 缓存。"""
+        """返回主域去重排序列表（同一主域下的所有子域归并为一个主域条目）。30s TTL 缓存（线程安全）。"""
         now = time.time()
-        hit = _sites_cache.get(('_sites',))
-        if hit and hit[0] > now:
-            return hit[1]
+        with _stats_cache_lock:
+            hit = _sites_cache.get(('_sites',))
+            if hit and hit[0] > now:
+                _sites_cache.move_to_end(('_sites',))
+                return hit[1]
         result = self._compute_sites()
-        _sites_cache[('_sites',)] = (now + SITES_CACHE_TTL, result)
+        with _stats_cache_lock:
+            _sites_cache[('_sites',)] = (now + SITES_CACHE_TTL, result)
+            _sites_cache.move_to_end(('_sites',), last=True)
         return result
 
     def _compute_sites(self):
@@ -924,10 +949,24 @@ class StatEngine(object):
         return '.'.join(parts[-2:])
 
     def _sites_under_root(self, root):
-        """返回数据库中属于该主域的所有完整域名（含主域本身）。"""
+        """返回数据库中属于该主域的所有完整域名（含主域本身）。30s TTL 缓存（P0-E），避免每次统计重扫全表。"""
         root = (root or '').strip().lower()
         if not root:
             return []
+        now = time.time()
+        with _stats_cache_lock:
+            hit = _root_sites_cache.get(root)
+            if hit and hit[0] > now:
+                _root_sites_cache.move_to_end(root)
+                return hit[1]
+        result = self._compute_sites_under_root(root)
+        with _stats_cache_lock:
+            _root_sites_cache[root] = (now + ROOT_SITES_TTL, result)
+            _root_sites_cache.move_to_end(root, last=True)
+        return result
+
+    def _compute_sites_under_root(self, root):
+        """_sites_under_root 的无缓存实现（供缓存未命中时调用）。"""
         try:
             conn = self._conn()
             rows = conn.execute("SELECT DISTINCT site FROM events WHERE site IS NOT NULL AND site<>''").fetchall()
@@ -955,7 +994,10 @@ class StatEngine(object):
                 "INSERT OR IGNORE INTO sites(site, label, created, site_key) VALUES(?,?,?,?)",
                 (site, label, int(datetime.now().timestamp() * 1000), _secrets.token_urlsafe(16)))
             conn.commit(); conn.close()
-            _sites_cache.clear()  # 站点列表变更，失效缓存（P2-4）
+            with _stats_cache_lock:
+                _sites_cache.clear()       # 站点列表变更，失效缓存
+                _root_sites_cache.clear()  # 主域映射新增站点，失效缓存（P1-3 / P0-E）
+                _stats_cache.clear()
             return True, site
         except Exception as e:
             return False, str(e)
@@ -971,6 +1013,10 @@ class StatEngine(object):
             conn.execute("DELETE FROM sites WHERE site=? OR site LIKE ?", (root, '%.' + root))
             conn.execute("DELETE FROM events WHERE site=? OR site LIKE ?", (root, '%.' + root))
             conn.commit(); conn.close()
+            with _stats_cache_lock:
+                _sites_cache.clear()       # 站点列表与统计口径均变化，统一失效缓存（P1-3）
+                _root_sites_cache.clear()
+                _stats_cache.clear()
             return True
         except Exception:
             return False
@@ -1026,6 +1072,8 @@ class StatEngine(object):
             conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('retention_days', ?)",
                          (str(days),))
             conn.commit(); conn.close()
+            with _stats_cache_lock:
+                _stats_cache.clear()   # 保留期影响统计范围，失效缓存（P1-3）
             return days
         except Exception as e:
             self._log('set_retention_days ERROR: %s' % e)
@@ -1063,6 +1111,8 @@ class StatEngine(object):
             return None
         self._inquiry_keywords = lst if lst else list(StatEngine._INQUIRY_PATH_KEYWORDS)
         self._build_inquiry_patterns()
+        with _stats_cache_lock:
+            _stats_cache.clear()   # 询盘规则影响访客页计数与来源归类，失效缓存（P1-3）
         return self._inquiry_keywords
 
     def _build_inquiry_patterns(self):
@@ -1107,6 +1157,8 @@ class StatEngine(object):
                      (str(off),))
         conn.commit(); conn.close()
         self.reload_timezone()
+        with _stats_cache_lock:
+            _stats_cache.clear()   # 时区偏移直接改变分桶与趋势结果，必须失效缓存（P1-3）
         return off
 
     def reload_timezone(self):
@@ -1165,7 +1217,8 @@ class StatEngine(object):
                 "VALUES(?,?,?,?,?,?)",
                 (visitor, (site or '').strip().lower(), (reason or '').strip(), (isp or '').strip(), asn or 0, ts))
             conn.commit(); conn.close()
-            _stats_cache.clear()  # 屏蔽影响统计口径，立即失效缓存（P1-2）
+            with _stats_cache_lock:
+                _stats_cache.clear()  # 屏蔽影响统计口径，立即失效缓存（P1-2 / P0-C 加锁）
             self._log('block_visitor: %s (site=%s reason=%s)' % (visitor, site, reason))
             return True
         except Exception as e:
@@ -1181,7 +1234,8 @@ class StatEngine(object):
             conn = self._conn()
             conn.execute("DELETE FROM blocked_visitors WHERE visitor=?", (visitor,))
             conn.commit(); conn.close()
-            _stats_cache.clear()  # 解除屏蔽后历史数据重新计入，立即失效缓存（P1-2）
+            with _stats_cache_lock:
+                _stats_cache.clear()  # 解除屏蔽后历史数据重新计入，立即失效缓存（P1-2 / P0-C 加锁）
             self._log('unblock_visitor: %s' % visitor)
             return True
         except Exception as e:
@@ -1191,6 +1245,7 @@ class StatEngine(object):
     def auto_block_datacenter_visitors(self):
         """启动时回填：将历史事件中属于机房 / 数据中心网络的访客加入 blocked_visitors，
         使其不再计入任何统计（visible_events 视图自动排除）。幂等（INSERT OR REPLACE）。
+        P1-8：改为批量 INSERT（executemany）并一次性失效缓存，消除逐访客 N+1 写入与重复清缓存开销。
         返回本次新屏蔽的访客数量。"""
         try:
             conn = self._conn()
@@ -1198,20 +1253,32 @@ class StatEngine(object):
                 "SELECT DISTINCT visitor, site, isp, asn FROM events "
                 "WHERE isp IS NOT NULL AND isp<>'' ").fetchall()
             conn.close()
-            n = 0
+            to_block = []
+            seen = set()
             for r in rows:
                 vid = r[0] or ''
-                if not vid or vid in self._dc_blocked_cache:
+                if not vid or vid in self._dc_blocked_cache or vid in seen:
                     continue
-                site_v = r[1] or ''
-                isp_v = r[2] or ''
+                isp_v = (r[2] or '').strip()
                 asn_v = r[3] or 0
                 dc, dc_reason = self.is_data_center_isp(isp_v, asn_v)
                 if dc:
-                    self.block_visitor(vid, site_v, reason=dc_reason, isp=isp_v, asn=asn_v)
+                    site_v = (r[1] or '').strip().lower()
+                    ts = int(datetime.now(TZ_BEIJING).timestamp() * 1000)
+                    to_block.append((vid, site_v, (dc_reason or '').strip(), isp_v, asn_v or 0, ts))
+                    seen.add(vid)
+            n = 0
+            if to_block:
+                conn = self._conn()
+                conn.executemany(
+                    "INSERT OR REPLACE INTO blocked_visitors(visitor, site, reason, isp, asn, created) "
+                    "VALUES(?,?,?,?,?,?)", to_block)
+                conn.commit(); conn.close()
+                for (vid, _, _, _, _, _) in to_block:
                     self._dc_blocked_cache.add(vid)
-                    n += 1
-            if n:
+                n = len(to_block)
+                with _stats_cache_lock:
+                    _stats_cache.clear()
                 self._log('auto_block_datacenter: 回填 %d 个机房/数据中心访客' % n)
             return n
         except Exception as e:
@@ -1289,15 +1356,21 @@ class StatEngine(object):
             return 0
 
     def get_stats(self, site, days=30, range_str=None):
-        # P1-2：进程内 TTL 缓存，避免每次刷新重算 30+ 条聚合 SQL
+        # P0-C：进程内 TTL + LRU 缓存，避免每次刷新重算 30+ 条聚合 SQL；加锁防多线程竞态
         key = (site, days, range_str)
         now = time.time()
-        hit = _stats_cache.get(key)
-        if hit and hit[0] > now:
-            return hit[1]
+        with _stats_cache_lock:
+            hit = _stats_cache.get(key)
+            if hit and hit[0] > now:
+                _stats_cache.move_to_end(key)
+                return hit[1]
         payload = self._compute_stats(site, days, range_str)
         if 'error' not in payload:
-            _stats_cache[key] = (now + STATS_CACHE_TTL, payload)
+            with _stats_cache_lock:
+                _stats_cache[key] = (now + STATS_CACHE_TTL, payload)
+                _stats_cache.move_to_end(key, last=True)
+                while len(_stats_cache) > STATS_CACHE_MAX:
+                    _stats_cache.popitem(last=False)
         return payload
 
     def _compute_stats(self, site, days=30, range_str=None):
@@ -1416,7 +1489,7 @@ class StatEngine(object):
             dom_counter = {}
             try:
                 for r in c.execute(self._landing_refs_sql(ph),
-                                   sp + (start_ms, end_ms) + sp + (start_ms, end_ms)).fetchall():
+                                   sp + (start_ms, end_ms)).fetchall():
                     ref = r[1] or ''
                     category, host = self.classify_source(ref, site)
                     cat_counter[category] = cat_counter.get(category, 0) + 1   # 每位访客计 1
@@ -1483,11 +1556,13 @@ class StatEngine(object):
             # ===== 新访客 vs 回访客（按首次到访时间，相对区间起点）=====
             nr = {'new': 0, 'returning': 0, 'new_pct': 0, 'returning_pct': 0}
             try:
+                # P1-9：外层补时间下界（保留期内），避免对全量历史无界扫描；结果等价于「首访在窗口前=回访」
+                cutoff = int((datetime.now(TZ_BEIJING) - timedelta(days=self.get_retention_days())).timestamp() * 1000)
                 c.execute(
-                    "SELECT visitor, MIN(ts) FROM visible_events WHERE site IN (%s) AND visitor IN "
+                    "SELECT visitor, MIN(ts) FROM visible_events WHERE site IN (%s) AND ts>=? AND visitor IN "
                     "(SELECT DISTINCT visitor FROM visible_events WHERE site IN (%s) AND ts>=? AND ts<?) "
                     "GROUP BY visitor" % (ph, ph),
-                    sp + sp + (start_ms, end_ms))
+                    sp + (cutoff,) + sp + (start_ms, end_ms))
                 for r in c.fetchall():
                     if (r[1] or 0) < start_ms:
                         nr['returning'] += 1
@@ -1701,13 +1776,22 @@ class StatEngine(object):
                             cur += timedelta(days=1)
                     return out
 
+                # P0-D：上一周期趋势改为单条 GROUP BY（SQLite 完成分桶），消除逐桶 N+1 查询
+                if granularity == 'hour':
+                    pcol = "strftime('%%Y-%%m-%%d %%H', ts/1000, 'unixepoch', '%+d seconds')" % secs
+                else:
+                    pcol = "strftime('%%Y-%%m-%%d', ts/1000, 'unixepoch', '%+d seconds')" % secs
+                prev_rows = c.execute(
+                    "SELECT %s AS b, COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
+                    "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<? GROUP BY b ORDER BY b" % (pcol, ph),
+                    sp + (p_start, p_end)).fetchall()
+                prev_map = {r[0]: (r[1] or 0, r[2] or 0) for r in prev_rows}
                 daily_prev = []
                 for (b0, b1) in _bounds_list(granularity, p_start, p_end):
-                    row = c.execute(
-                        "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
-                        "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
-                        sp + (b0, b1)).fetchone()
-                    daily_prev.append({'pv': row[0] or 0, 'uv': row[1] or 0})
+                    cur = datetime.fromtimestamp(b0 / 1000, tz=TZ_BEIJING)
+                    label = cur.strftime('%Y-%m-%d %H') if granularity == 'hour' else cur.strftime('%Y-%m-%d')
+                    pv, uv = prev_map.get(label, (0, 0))
+                    daily_prev.append({'pv': pv, 'uv': uv})
                 p_tot = c.execute(
                     "SELECT COUNT(*), COUNT(DISTINCT visitor) FROM visible_events "
                     "WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?" % ph,
@@ -1780,6 +1864,7 @@ class StatEngine(object):
         ph = ','.join('?' * len(sites))
         sp = tuple(sites)
         start_ms, end_ms, _, _ = self._parse_range(range_str, days)
+        buckets = {}   # 访客分桶（在异常降级分支外先行初始化，避免 UnboundLocalError，P0-A）
         try:
             conn = self._conn()
             rows = conn.execute(
@@ -1810,7 +1895,7 @@ class StatEngine(object):
                     # 仅统计满足筛选条件的独立访客（落地来源归属 + 询盘命中）
                     matched = 0
                     for r in conn.execute(self._landing_refs_sql(ph),
-                                       sp + (start_ms, end_ms) + sp + (start_ms, end_ms)).fetchall():
+                                       sp + (start_ms, end_ms)).fetchall():
                         vid = r[0]
                         if inquiry and vid not in inquiry_vis:
                             continue
@@ -1827,11 +1912,13 @@ class StatEngine(object):
                         sp + (start_ms, end_ms)).fetchone()[0] or 0
             except Exception as e:
                 self._log('get_visitors total_visitors ERROR: %s' % e)
-                total_visitors = len(buckets)
-                inquiry_count_full = sum(1 for b in buckets.values() if b.get('is_inquiry'))
+                # 降级：保留已初始化的计数（total_visitors / inquiry_count_full），
+                # 原代码引用尚未构建的 buckets 会触发 UnboundLocalError 进而整页访客为空并泄漏连接（P0-A）
             inquiry_count = inquiry_count_full
-            conn.close()
-            buckets = {}
+            try:
+                conn.close()
+            except Exception:
+                pass
             for r in rows:
                 vid = r[1] or '(未知)'
                 b = buckets.get(vid)
@@ -2186,27 +2273,53 @@ class Handler(BaseHTTPRequestHandler):
     require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'（严格模式）
     www_root = None
 
-    def _send_json(self, obj, code=200):
+    def _send_json(self, obj, code=200, cors=None):
         data = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        # P0-F：仅公开上报端点 /api/event 需要跨域（浏览器埋点从任意站点回传）；
+        #       其余查询接口默认不返回 Access-Control-Allow-Origin，避免任意第三方网页跨域读取统计/访客数据（隐私友好）
+        if cors:
+            self.send_header('Access-Control-Allow-Origin', cors)
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
         if not getattr(self, '_head_mode', False):
             self.wfile.write(data)
 
-    def _send_file(self, path, content_type):
+    def _send_file(self, path, content_type, cache_seconds=3600):
         try:
-            with open(path, 'rb') as f:
-                data = f.read()
+            try:
+                st = os.stat(path)
+            except OSError:
+                self.send_error(404); return
+            mtime = int(st.st_mtime)
+            size = st.st_size
+            key = (path, size, mtime)
+            data = _file_cache.get(key)
+            if data is None:
+                with open(path, 'rb') as f:
+                    data = f.read()
+                if len(_file_cache) < 64:   # P0-B：最多缓存 64 个静态文件，控制内存占用
+                    _file_cache[key] = data
+            etag = '"%d-%d"' % (size, mtime)
+            head = getattr(self, '_head_mode', False)
+            inm = self.headers.get('If-None-Match', '')
+            if inm and inm == etag:
+                self.send_response(304)
+                self.send_header('ETag', etag)
+                self.send_header('Cache-Control', 'public, max-age=%d' % cache_seconds)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             self.send_response(200)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'public, max-age=%d' % cache_seconds)
+            self.send_header('ETag', etag)
             self.end_headers()
-            if not getattr(self, '_head_mode', False):
+            if not head:
                 self.wfile.write(data)
         except Exception:
             self.send_error(404)
@@ -2214,7 +2327,9 @@ class Handler(BaseHTTPRequestHandler):
     def _check_token(self, query):
         if not self.token:
             return True
-        return query.get('token', [''])[0] == self.token
+        # P1-6：用 hmac.compare_digest 做常量时间比较，避免令牌比较的时序侧信道
+        provided = query.get('token', [''])[0]
+        return hmac.compare_digest(provided, self.token)
 
     def _deploy_ok(self, ev):
         """站点部署令牌校验（防 tracker 盗用 / 抗压）。
@@ -2248,11 +2363,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+        # P0-F：仅公开上报端点 /api/event 需要跨域预检放行；其余路径不返回 ACAO，避免数据被第三方网页跨域读取
+        path = (getattr(self, 'path', '') or '')
+        if path == '/api/event':
+            self.send_response(204)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+        else:
+            self.send_response(204)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
@@ -2316,10 +2438,10 @@ class Handler(BaseHTTPRequestHandler):
                 'ip': self.client_ip(),
             }
             if not self._deploy_ok(ev):
-                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403)
+                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403, cors='*')
                 return
             ok = self.engine.add_event(ev)
-            self._send_json({'status': ok}, 200 if ok else 400)
+            self._send_json({'status': ok}, 200 if ok else 400, cors='*')
             return
 
         if path in ('/api/sites', '/api/sites/'):
@@ -2441,9 +2563,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/static/'):
             # 静态资源：echarts、世界地图 GeoJSON 等
             rel = path[len('/static/'):]
-            # 防止路径穿越
-            safe = os.path.normpath(rel).replace('\\', '/')
-            if safe.startswith('..') or safe.startswith('/'):
+            # P1-7 / P0-B：跨平台路径穿越防护——禁止绝对路径、上级目录(..)、Windows 盘符(:) 与 UNC
+            safe = os.path.normpath(rel)
+            norm = safe.replace('\\', '/')
+            parts = norm.split('/')
+            if norm.startswith('/') or ':' in norm or '..' in parts:
                 self.send_error(403); return
             static_root = os.path.join(self.www_root, 'static')
             fpath = os.path.join(static_root, safe)
@@ -2653,10 +2777,10 @@ class Handler(BaseHTTPRequestHandler):
             # 每站点独立令牌（sites.site_key），由面板在「添加站点」时自动生成；
             # tracker 通过 data-id 随事件带回，服务端校验通过才落库，否则 403 拒绝（不触发 GeoIP/落库）。
             if not self._deploy_ok(ev):
-                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403)
+                self._send_json({'status': False, 'error': '站点部署令牌校验失败'}, 403, cors='*')
                 return
             ok = self.engine.add_event(ev)
-            self._send_json({'status': ok}, 200 if ok else 400)
+            self._send_json({'status': ok}, 200 if ok else 400, cors='*')
         except Exception as e:
             self._send_json({'status': False, 'error': str(e)}, 500)
 
@@ -2682,27 +2806,29 @@ def main():
 
     os.makedirs(args.data_dir, exist_ok=True)
     engine = StatEngine(data_dir=args.data_dir, geo_db=args.geoip_db, asn_db=args.asn_db)
-    # 启动即按保留期清理过期原始事件（默认 720 天）；缺失或异常不影响启动
-    try:
-        deleted = engine.cleanup_old_events()
-        if deleted:
-            sys.stderr.write('[info] 启动清理：已删除 %d 条超过保留期的旧事件\n' % deleted)
-    except Exception as e:
-        sys.stderr.write('[warn] 启动清理失败：%s\n' % e)
-    # 启动即回填：将历史事件中确认的机房 / 数据中心流量访客自动排除（不计入统计）
-    try:
-        n_dc = engine.auto_block_datacenter_visitors()
-        if n_dc:
-            sys.stderr.write('[info] 机房/数据中心流量回填：已自动排除 %d 个访客\n' % n_dc)
-    except Exception as e:
-        sys.stderr.write('[warn] 机房流量回填失败：%s\n' % e)
-    # 启动即清洗：将部署「查询串剥离」前入库、含 ? 查询串或 # 片段的历史路径归一化为静态路径
-    try:
-        n_path = engine.clean_stored_paths()
-        if n_path:
-            sys.stderr.write('[info] 历史路径清洗：已归一化 %d 条含查询串/片段的路径\n' % n_path)
-    except Exception as e:
-        sys.stderr.write('[warn] 历史路径清洗失败：%s\n' % e)
+    # P0-G：启动治理改为后台线程异步执行，避免大库下 cleanup / auto_block / clean_stored_paths
+    # 全表扫描阻塞 serve_forever 启动；守护线程随主进程退出，异常不影响服务启动与运行。
+    def _run_startup_tasks():
+        try:
+            deleted = engine.cleanup_old_events()
+            if deleted:
+                sys.stderr.write('[info] 启动清理：已删除 %d 条超过保留期的旧事件\n' % deleted)
+        except Exception as e:
+            sys.stderr.write('[warn] 启动清理失败：%s\n' % e)
+        try:
+            n_dc = engine.auto_block_datacenter_visitors()
+            if n_dc:
+                sys.stderr.write('[info] 机房/数据中心流量回填：已自动排除 %d 个访客\n' % n_dc)
+        except Exception as e:
+            sys.stderr.write('[warn] 机房流量回填失败：%s\n' % e)
+        try:
+            n_path = engine.clean_stored_paths()
+            if n_path:
+                sys.stderr.write('[info] 历史路径清洗：已归一化 %d 条含查询串/片段的路径\n' % n_path)
+        except Exception as e:
+            sys.stderr.write('[warn] 历史路径清洗失败：%s\n' % e)
+    _startup_thread = threading.Thread(target=_run_startup_tasks, daemon=True)
+    _startup_thread.start()
     Handler.engine = engine
     Handler.token = args.token
     Handler.deploy_key = (args.deploy_key or '').strip() or DEPLOY_KEY
