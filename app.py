@@ -62,7 +62,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.10"
+VERSION = "1.4.11"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -181,7 +181,7 @@ class StatEngine(object):
         self._load_geo(geo_db)
         self._load_asn(asn_db)
         self._init_db()
-        # 加载运行时可配置项：潜在目标客户规则、统计时区
+        # 加载运行时可配置项：潜在目标访客规则、统计时区
         self._inquiry_keywords = self.get_lead_patterns()
         self._build_inquiry_patterns()
         self.reload_timezone()
@@ -1083,9 +1083,9 @@ class StatEngine(object):
             self._log('set_retention_days ERROR: %s' % e)
             return None
 
-    # ---------------- 潜在询盘（潜在目标客户）页面规则 ----------------
+    # ---------------- 潜在询盘（潜在目标访客）页面规则 ----------------
     def get_lead_patterns(self):
-        """返回潜在目标客户判定用的路径模式列表（支持 * 通配符）。缺省回退到内置多语种关键词。"""
+        """返回潜在目标访客判定用的路径模式列表（支持 * 通配符）。缺省回退到内置多语种关键词。"""
         try:
             conn = self._conn()
             row = conn.execute("SELECT value FROM meta WHERE key='lead_patterns'").fetchone()
@@ -1099,7 +1099,7 @@ class StatEngine(object):
         return list(StatEngine._INQUIRY_PATH_KEYWORDS)
 
     def set_lead_patterns(self, patterns):
-        """保存潜在目标客户路径模式（列表或换行分隔字符串，支持 * 通配符）。空列表则恢复默认。"""
+        """保存潜在目标访客路径模式（列表或换行分隔字符串，支持 * 通配符）。空列表则恢复默认。"""
         if patterns is None:
             patterns = []
         if isinstance(patterns, str):

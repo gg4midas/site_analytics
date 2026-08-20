@@ -342,10 +342,10 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
 
   <!-- 访客 -->
   <section id="tab-visitors" style="display:none">
-    <div class="section card inquiry-block" id="inquiryCard" onclick="toggleInquiryFilter()" title="点击仅查看潜在目标客户">
+    <div class="section card inquiry-block" id="inquiryCard" onclick="toggleInquiryFilter()" title="点击仅查看潜在目标访客">
       <div class="inquiry-left">
-        <div class="inquiry-title"><span class="dot"></span><span data-i18n="潜在目标客户">潜在目标客户</span></div>
-        <div class="inquiry-sub" data-i18n="访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户">访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户</div>
+        <div class="inquiry-title"><span class="dot"></span><span data-i18n="潜在目标访客">潜在目标访客</span></div>
+        <div class="inquiry-sub" data-i18n="访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标访客">访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标访客</div>
       </div>
       <div class="inquiry-right">
         <div class="inquiry-num" id="inquiryCount">0</div>
@@ -492,8 +492,8 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
         </div>
       </div>
       <div class="retention-box">
-        <div class="dc-title" data-i18n="④ 潜在目标客户规则">④ 潜在目标客户规则</div>
-        <div class="dc-note" data-i18n="定义哪些被访问页面视为「潜在目标客户」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。">定义哪些被访问页面视为「潜在目标客户」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。</div>
+        <div class="dc-title" data-i18n="④ 潜在目标访客规则">④ 潜在目标访客规则</div>
+        <div class="dc-note" data-i18n="定义哪些被访问页面视为「潜在目标访客」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。">定义哪些被访问页面视为「潜在目标访客」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。</div>
         <div class="retention-row" style="flex-direction:column;align-items:stretch;gap:8px">
           <textarea id="leadPatterns" rows="5" style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" placeholder="/product&#10;contact&#10;/p/*"></textarea>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -545,7 +545,7 @@ var I18N_EN = {
 '退出页 TOP（访客末屏页面）':'Top Exit Pages',
 '页面平均停留时长 TOP（基于离开页上报时长）':'Top Avg. Dwell Time',
 '热门页面 TOP':'Top Pages',
-'潜在目标客户':'Potential Leads',
+'潜在目标访客':'Potential Target Visitors',
 '访客会话':'Visitor Sessions',
 '浏览器分布':'Browser Distribution',
 '其他':'Other',
@@ -642,7 +642,7 @@ var I18N_EN = {
 '已删除站点 {n}（含全部访问数据）。':'Deleted site {n} (with all visit data).',
 '删除失败：':'Delete failed: ',
 '位':'',' 秒':' sec',' 分 ':' min ',' 时 ':' hr ',' 分':' min',
-'访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标客户':'Visitors whose URL contains a product page (/product, /products, etc.) or contact page and their multilingual variants (FR/DE/IT/NL/ES/JA/KO) are treated as potential leads',
+'访问 URL 含产品页（/product、/products 等）或联系页（contact 等）及其法/德/意/荷/西/日/韩多语种变体的访客，视为潜在目标访客':'Visitors whose URL contains a product page (/product, /products, etc.) or contact page and their multilingual variants (FR/DE/IT/NL/ES/JA/KO) are treated as potential target visitors',
 '指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。':'Metrics (aligned with PageSpeed Insights field data): FCP, LCP, TTFB, CLS, Speed Index, all in seconds (CLS dimensionless). Top cards use the 75th percentile (p75, consistent with PSI), more robust to outliers than the mean; the table shows per-page means. Color thresholds: green=good / yellow=needs improvement / red=poor. Speed Index is a browser-estimated visual-completeness value (not Lighthouse frame-by-frame), for trend reference only. Aggregation filters outliers > 60s and CLS > 2. Auto-refresh every 60s; pauses when expanding visitor details or opening a modal; click "Refresh" (top-right) to refresh manually.',
 '说明：以每位访客的「落地来源」（窗口内首条访问的 Referrer）为唯一归属，因此各来源独立访客数之和 = 概览总独立访客数，不会重复计数。':'Note: each visitor is attributed to their landing source (first Referrer in the window) as the unique owner, so the sum of per-source unique visitors equals the overview total, with no double counting.',
 '说明：仅当访客来自「带 Referrer」的站点才能识别来源；若对方站点设置了 <code>Referrer-Policy: no-referrer</code> 或浏览器未发送来路，则归为「直接访问」。搜索引擎 / AI 工具 / 社交媒体的识别依赖来路域名，无法穿透无来路的流量——这是所有 first-party 埋点统计的共性。各域名仅展示 TOP 15，其独立访客数之和可能小于总独立访客数。':'Note: a visitor\'s source is only identified when they arrive from a site that sends a Referrer; if the source site sets <code>Referrer-Policy: no-referrer</code> or the browser sends no referrer, it is counted as "Direct". Search engines / AI tools / social media are identified by referrer domain and cannot be detected through refererless traffic—this is common to all first-party analytics. Only the top 15 domains are shown; their unique-visitor sums may be less than the total.',
@@ -665,8 +665,8 @@ var I18N_EN = {
 '近5分钟':'Last 5 min',
 '近10分钟':'Last 10 min','近30分钟':'Last 30 min',
 '搜索引擎':'Search Engines','AI 工具':'AI Tools','社交媒体':'Social Media','外部链接':'External Links','直接访问':'Direct',
-'④ 潜在目标客户规则':'④ Potential Lead Rules',
-'定义哪些被访问页面视为「潜在目标客户」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。':'Define which visited pages count as "Potential Leads". One path fragment or * wildcard pattern per line (case-insensitive, URL-decoded); a hit on any marks the visitor.',
+'④ 潜在目标访客规则':'④ Potential Target Visitor Rules',
+'定义哪些被访问页面视为「潜在目标访客」。每行一个路径片段或 * 通配符模式（不区分大小写、已做 URL 解码），命中任一即标记。':'Define which visited pages count as "Potential Target Visitors". One path fragment or * wildcard pattern per line (case-insensitive, URL-decoded); a hit on any marks the visitor.',
 '每行一个模式，留空则恢复默认（内置多语种产品/联系页关键词）。':'One pattern per line. Leave empty to restore the default (built-in multilingual product/contact keywords).',
 '⑤ 统计时区':'⑤ Statistics Timezone',
 '按该时区聚合与展示「自然日 / 小时」维度（影响概览趋势、月份与日期标签）。默认东八区（UTC+8）。':'Aggregation and display of daily/hourly dimensions use this timezone (affects overview trend, months and date labels). Default: UTC+8.',
@@ -1519,7 +1519,7 @@ function buildVisitorRow(v, i){
   }
   var h = '<tr class="visitor-row'+(suspect?' is-suspect':'')+'" '+click+'>'+
     '<td>'+expandIcon+'</td>'+
-    '<td class="mono">'+shortId(v.visitor)+(v.is_inquiry ? '<span class="inq-badge">'+t('潜在目标客户')+'</span>' : '')+suspectBadge+'</td>'+
+    '<td class="mono">'+shortId(v.visitor)+suspectBadge+'</td>'+
     '<td>'+ref+'</td>'+
     '<td><span class="tag '+devClass(v.device)+'">'+escapeHtml(t(v.device))+'</span> '+escapeHtml(t(v.browser))+'</td>'+
     '<td>'+isp+'</td>'+
@@ -2030,7 +2030,7 @@ function getSourceParams(){
   return '';
 }
 
-// ===== 潜在目标客户筛选 =====
+// ===== 潜在目标访客筛选 =====
 var inquiryOnly = false;
 function getInquiryParams(){ return inquiryOnly ? '&inquiry=1' : ''; }
 function toggleInquiryFilter(){
@@ -2045,7 +2045,7 @@ function renderInquiryChip(){
   if(!chip) return;
   if(!inquiryOnly){ chip.style.display='none'; chip.innerHTML=''; return; }
   chip.style.display='inline-flex';
-  chip.innerHTML = t('仅看：')+'<b>'+t('潜在目标客户')+'</b><span class="filter-x" title="'+t('清除筛选')+'" onclick="toggleInquiryFilter()">×</span>';
+  chip.innerHTML = t('仅看：')+'<b>'+t('潜在目标访客')+'</b><span class="filter-x" title="'+t('清除筛选')+'" onclick="toggleInquiryFilter()">×</span>';
 }
 
 function onWindowChange(){
