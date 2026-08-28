@@ -62,7 +62,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.12"
+VERSION = "1.4.13"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -1924,6 +1924,8 @@ class StatEngine(object):
             except Exception:
                 pass
             for r in rows:
+                if r[3] == 'perf':
+                    continue  # 性能探针不参与访客聚合：perf-only 访问端（预览/预取）不应显示为 0 页面访客
                 vid = r[1] or '(未知)'
                 b = buckets.get(vid)
                 if b is None:
