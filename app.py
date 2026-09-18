@@ -2560,6 +2560,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
     <input id="u" autocomplete="username" maxlength="32" required>
     <label for="p">密码</label>
     <input id="p" type="password" autocomplete="current-password" minlength="6" required>
+    <label for="p2" id="lbl-p2" style="display:none">确认密码</label>
+    <input id="p2" type="password" autocomplete="new-password" style="display:none">
     <button class="btn" id="go" type="submit">登录</button>
   </form>
   <div class="msg" id="msg"></div>
@@ -2574,6 +2576,10 @@ function setMode(m){
   document.getElementById('go').textContent = m==='login' ? '登录' : '注册并进入';
   document.getElementById('msg').textContent='';
   document.getElementById('p').setAttribute('autocomplete', m==='login'?'current-password':'new-password');
+  var show = (m==='reg');
+  document.getElementById('p2').style.display = show ? '' : 'none';
+  document.getElementById('lbl-p2').style.display = show ? '' : 'none';
+  document.getElementById('p2').required = show;
 }
 document.getElementById('tab-login').onclick=function(){ setMode('login'); };
 document.getElementById('tab-reg').onclick=function(){ setMode('reg'); };
@@ -2582,13 +2588,18 @@ document.getElementById('f').onsubmit=function(e){
   var u=document.getElementById('u').value.trim(), p=document.getElementById('p').value;
   var msg=document.getElementById('msg'), go=document.getElementById('go');
   if(!u||!p){ msg.textContent='请输入用户名与密码'; return; }
+  if(p.length<6){ msg.textContent='密码至少 6 位'; return; }
+  if(mode==='reg' && p!==document.getElementById('p2').value){ msg.textContent='两次输入的密码不一致'; return; }
   go.disabled=true; msg.textContent='';
   fetch('/api/'+(mode==='login'?'login':'register'),{
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({username:u, password:p})
-  }).then(function(r){ return r.json().then(function(j){ return {code:r.status, j:j}; }); })
+  }).then(function(r){ return r.text().then(function(t){
+      var j=null; try{ j=JSON.parse(t); }catch(e){}
+      return {code:r.status, j:j};
+    }); })
     .then(function(res){
-      if(res.j && res.j.status){ location.replace('/'); return; }
+      if(res.code===200){ location.replace('/'); return; }
       msg.textContent=(res.j&&res.j.error)||('失败 ('+res.code+')');
       go.disabled=false;
     })
@@ -3175,11 +3186,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not ok:
                     self._send_json({'status': False, 'error': info}, 400); return
                 u = self.engine.get_user_row(info)
+                resp = json.dumps({'status': True, 'user': {'username': u['username'], 'role': u['role']}}).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self._set_session_cookie(self.engine.create_session(u['id']))
-                self.send_header('Content-Length', '0')
+                self.send_header('Content-Length', str(len(resp)))
                 self.end_headers()
+                self.wfile.write(resp)
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
@@ -3197,21 +3210,25 @@ class Handler(BaseHTTPRequestHandler):
                 u = self.engine.authenticate(body.get('username', ''), body.get('password', ''))
                 if not u:
                     self._send_json({'status': False, 'error': '用户名或密码错误'}, 401); return
+                resp = json.dumps({'status': True, 'user': {'username': u['username'], 'role': u['role']}}).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self._set_session_cookie(self.engine.create_session(u['id']))
-                self.send_header('Content-Length', '0')
+                self.send_header('Content-Length', str(len(resp)))
                 self.end_headers()
+                self.wfile.write(resp)
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
         if path in ('/api/logout', '/api/logout/'):
             self.engine.delete_session(self._read_cookie('sid'))
+            resp = json.dumps({'status': True}).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax')
-            self.send_header('Content-Length', '0')
+            self.send_header('Content-Length', str(len(resp)))
             self.end_headers()
+            self.wfile.write(resp)
             return
         if path in ('/api/user/password', '/api/user/password/'):
             # 本人修改口令（需原密码）
