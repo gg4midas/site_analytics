@@ -250,7 +250,7 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
     <div class="ctrl">
       <select id="selSite" onchange="onSiteChange()"><option value="" data-i18n="加载中…">加载中…</option></select>
     </div>
-    <button class="btn ghost" onclick="openSiteManager()" data-i18n="+ 添加站点">+ 添加站点</button>
+    <button class="btn ghost adm" onclick="openSiteManager()" data-i18n="+ 添加站点">+ 添加站点</button>
     <div class="ctrl">
       <select id="selRange" onchange="onRangeChange()"></select>
       <span id="customRangePanel" class="custom-range" style="display:none">
@@ -262,6 +262,12 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
     </div>
     <button class="btn ghost" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
     <button class="btn ghost" id="btnTheme" onclick="toggleTheme()">深色</button>
+    <span id="userArea" style="display:none;align-items:center;gap:8px">
+      <span id="whoami" style="color:var(--muted);font-size:13px"></span>
+      <button class="btn ghost adm" id="btnUsers" onclick="openUsers()" data-i18n="用户管理">用户管理</button>
+      <button class="btn ghost" onclick="changeMyPwd()" data-i18n="改密码">改密码</button>
+      <button class="btn ghost" onclick="logout()" data-i18n="退出">退出</button>
+    </span>
   </div>
 
   <div class="nav" id="nav">
@@ -469,7 +475,7 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
       <div class="add-row">
         <input id="newSite" data-i18n-attr="placeholder:要监控的域名，如 example.com（可选）" placeholder="要监控的域名，如 example.com（可选）">
         <input id="newLabel" data-i18n-attr="placeholder:备注名（可选）" placeholder="备注名（可选）">
-        <button class="btn" onclick="addSite()" data-i18n="添加站点">添加站点</button>
+        <button class="btn adm" onclick="addSite()" data-i18n="添加站点">添加站点</button>
       </div>
       <div class="note" data-i18n="部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。">部署上方代码后，访问各域名即会自动出现在站点列表与下拉框中；在此可删除不再需要的站点（含其全部数据）。</div>
       <div id="siteList"></div>
@@ -479,8 +485,8 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
         <div class="retention-row">
           <input id="retentionDays" type="number" min="30" step="30" placeholder="720">
           <span style="color:var(--muted);font-size:12px" data-i18n="天">天</span>
-          <button class="mini" onclick="saveRetention()" data-i18n="保存保留期">保存保留期</button>
-          <button class="mini danger" onclick="cleanupNow()" data-i18n="立即清理过期数据">立即清理过期数据</button>
+          <button class="mini adm" onclick="saveRetention()" data-i18n="保存保留期">保存保留期</button>
+          <button class="mini danger adm" onclick="cleanupNow()" data-i18n="立即清理过期数据">立即清理过期数据</button>
           <span id="retentionResult" style="color:var(--muted);font-size:12px"></span>
         </div>
       </div>
@@ -490,8 +496,8 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
         <div class="retention-row" style="flex-direction:column;align-items:stretch;gap:8px">
           <textarea id="leadPatterns" rows="5" style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)" placeholder="/product&#10;contact&#10;/p/*"></textarea>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="mini" onclick="saveLeadPatterns()" data-i18n="保存设置">保存设置</button>
-            <button class="mini" onclick="resetLeadPatterns()" data-i18n="恢复默认">恢复默认</button>
+            <button class="mini adm" onclick="saveLeadPatterns()" data-i18n="保存设置">保存设置</button>
+            <button class="mini adm" onclick="resetLeadPatterns()" data-i18n="恢复默认">恢复默认</button>
             <span class="dc-note" style="margin:0" data-i18n="每行一个模式，留空则恢复默认（内置多语种产品/联系页关键词）。">每行一个模式，留空则恢复默认（内置多语种产品/联系页关键词）。</span>
             <span id="leadResult" style="color:var(--muted);font-size:12px"></span>
           </div>
@@ -503,7 +509,7 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
         <div class="retention-row">
           <input id="tzOffset" type="number" step="0.5" min="-12" max="14" placeholder="8">
           <span style="color:var(--muted);font-size:12px" data-i18n="时区偏移（小时，相对 UTC，可带小数，范围 -12 ~ +14）">时区偏移（小时，相对 UTC，可带小数，范围 -12 ~ +14）</span>
-          <button class="mini" onclick="saveTimezone()" data-i18n="保存设置">保存设置</button>
+          <button class="mini adm" onclick="saveTimezone()" data-i18n="保存设置">保存设置</button>
           <span id="tzResult" style="color:var(--muted);font-size:12px"></span>
         </div>
       </div>
@@ -517,13 +523,62 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
   </div>
 </div>
 
+<!-- 用户管理弹窗（v1.5.0 登录鉴权） -->
+<div id="userModal" class="modal" style="display:none">
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span data-i18n="用户管理">用户管理</span>
+        <button class="mini" onclick="closeUsers()">✕</button>
+      </div>
+      <div class="add-row">
+        <input id="newUser" data-i18n-attr="placeholder:用户名（2-32 位）" placeholder="用户名（2-32 位）">
+        <input id="newUserPwd" type="password" data-i18n-attr="placeholder:密码（至少 6 位）" placeholder="密码（至少 6 位）">
+        <select id="newUserRole">
+          <option value="viewer" data-i18n="普通用户（只读）">普通用户（只读）</option>
+          <option value="admin" data-i18n="管理员">管理员</option>
+        </select>
+        <button class="btn adm" onclick="createUser()" data-i18n="创建用户">创建用户</button>
+      </div>
+      <div class="note" data-i18n="普通用户可查看全部分析数据但不能修改任何设置；管理员拥有全部权限。首个注册的账户自动成为管理员。">普通用户可查看全部分析数据但不能修改任何设置；管理员拥有全部权限。首个注册的账户自动成为管理员。</div>
+      <div id="userList"></div>
+    </div>
+</div>
+
 <script>
 var SA_LANG = (function(){ var l = localStorage.getItem('sa_lang'); return (l==='en'||l==='zh') ? l : 'zh'; })();
+var currentUser = null;
+/* 会话失效统一拦截：任意 /api/* 返回 401（登录接口本身除外）时跳转登录页（v1.5.0） */
+(function(){
+  var _origFetch = window.fetch;
+  window.fetch = function(input, init){
+    return _origFetch.apply(this, arguments).then(function(res){
+      try{
+        var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        if(res.status === 401 && url.indexOf('/api/') !== -1
+           && url.indexOf('/api/me') === -1 && url.indexOf('/api/login') === -1
+           && url.indexOf('/api/register') === -1){
+          location.href = '/login';
+        }
+      }catch(e){}
+      return res;
+    });
+  };
+})();
 var I18N_EN = {
 '网站流量统计':'Website Analytics',
 '概览':'Overview','访客':'Visitors','内容':'Content','性能':'Performance','来源':'Sources','地域':'Geo','实时监控':'Realtime',
 '刷新':'Refresh','深色':'Dark','浅色':'Light',
 '+ 添加站点':'+ Add Site','应用':'Apply','至':'to',
+'用户管理':'User Management','改密码':'Change Password','退出':'Log out','（管理员）':' (Admin)',
+'普通用户':'Viewer','管理员':'Admin','启用':'Active','已停用':'Disabled','停用':'Disable',
+'设为管理员':'Make Admin','设为普通':'Make Viewer','重置密码':'Reset Password','（当前登录）':' (current)',
+'创建用户':'Create User','普通用户（只读）':'Viewer (read-only)','暂无用户。':'No users yet.',
+'用户名（2-32 位）':'Username (2-32 chars)','密码（至少 6 位）':'Password (min 6 chars)',
+'普通用户可查看全部分析数据但不能修改任何设置；管理员拥有全部权限。首个注册的账户自动成为管理员。':'Viewers can see all analytics but cannot change anything; admins have full access. The first registered account automatically becomes an admin.',
+'操作失败：':'Operation failed: ','创建失败：':'Create failed: ','修改失败：':'Change failed: ',
+'确定删除用户「{n}」？':'Delete user "{n}"?','为 {n} 设置新密码（至少 6 位）：':'Set a new password for {n} (min 6 chars):',
+'请输入原密码：':'Current password:','请输入新密码（至少 6 位）：':'New password (min 6 chars):','密码已修改。':'Password changed.',
+'已创建用户 {n}。':'User {n} created.','请输入用户名与密码':'Please enter username and password','密码至少 6 位':'Password must be at least 6 characters',
 '保存保留期':'Save Retention','立即清理过期数据':'Clean Expired Now',
 '复制':'Copy','复制埋点代码':'Copy embed code','添加站点':'Add Site','重新生成令牌':'Regenerate token','启用令牌':'Enable token',
 '展开已屏蔽访客':'Show blocked visitors','收起已屏蔽访客':'Hide blocked visitors','恢复':'Restore',
@@ -565,7 +620,6 @@ var I18N_EN = {
 '③ 已屏蔽访客（机房 / 数据中心流量自动排除）':'③ Blocked Visitors (datacenter / hosting traffic auto-excluded)',
 '系统会自动排除机房 / 数据中心网络（云主机、托管、CDN 等）的访客，不计入任何统计；其原始数据被保留、可恢复。需要查看或恢复误判时，展开下方列表即可。':'The system auto-excludes visitors from datacenter / hosting networks (cloud, hosting, CDN, etc.) from all stats; their raw data is kept and recoverable. Expand the list below to review or restore false positives.',
 '正在获取站点列表…':'Loading site list…',
-'面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。':'Panel token invalid: append ?token=YOUR_TOKEN to the URL, or remove --token when starting app.py.',
 '暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。':'No site data yet. Embed the tracker.js snippet on your pages; data refreshes once real visits occur.',
 '获取站点失败：':'Failed to load sites: ',
 '今天':'Today','昨天':'Yesterday','过去2天':'Last 2 days','过去7天':'Last 7 days','过去14天':'Last 14 days','过去28天':'Last 28 days','过去60天':'Last 60 days','过去90天':'Last 90 days','自定义日期范围':'Custom range',
@@ -705,6 +759,8 @@ function applyI18n(){
 function setLoading(on){ document.body.classList.toggle('loading', !!on); }
 document.addEventListener('keydown', function(e){
   var m=document.getElementById('siteModal');
+  var um=document.getElementById('userModal');
+  if(e.key==='Escape' && um && um.style.display!=='none'){ closeUsers(); return; }
   if(e.key==='Escape' && m && m.style.display!=='none'){ closeSiteManager(); return; }
   if(e.key!=='Tab' || !m || m.style.display==='none') return;
   var f=m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
@@ -749,12 +805,8 @@ var BASE = (function(){
   if(p.charAt(p.length-1) === '/') p = p.substring(0, p.length-1);
   return p;
 })();
-var TOKEN = (function(){
-  var m = location.search.match(/[?&]token=([^&]+)/);
-  return m ? decodeURIComponent(m[1]) : '';
-})();
 function apiUrl(p){
-  return BASE + p + (TOKEN ? (p.indexOf('?')>=0?'&':'?')+'token='+encodeURIComponent(TOKEN) : '');
+  return BASE + p;
 }
 function safeCall(fn){ try{ return fn(); }catch(e){ console.error('[site_analytics]',e); } }
 
@@ -988,11 +1040,7 @@ function loadSites(){
           loadData();
         } else {
           var msg = res.error || res.msg || t('未获取到站点');
-          if(msg==='token 错误'){
-            setTip(t('面板令牌校验失败：请在访问地址后加 ?token=你的令牌，或在启动 app.py 时去掉 --token。'), true);
-          } else {
-            setTip(t('暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。'));
-          }
+          setTip(t('暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。'));
         }
       });
     })
@@ -1598,7 +1646,7 @@ function renderBlocked(){
     h+='<div class="blocked-item"><div class="bi-main">'+
       '<div class="mono">'+shortId(b.visitor)+(b.site?(' · '+escapeHtml(b.site)):'')+'</div>'+
       '<div class="bi-isp">'+(b.isp?escapeHtml(b.isp)+' ':'')+(b.asn?'<span class="seg-tag">AS'+escapeHtml(String(b.asn))+'</span> · ':'· ')+(b.reason?escapeHtml(b.reason):t('手动屏蔽'))+(when?(' · '+when):'')+'</div>'+
-      '</div><button class="mini" onclick="unblockVisitor(\''+vidEsc+'\')">'+t('恢复')+'</button></div>';
+      '</div><button class="mini adm" onclick="unblockVisitor(\''+vidEsc+'\')">'+t('恢复')+'</button></div>';
   }
   el.innerHTML=h;
 }
@@ -2200,16 +2248,16 @@ function renderManagedSites(){
       +'<span class="name">'+escapeHtml(s.site)+'</span>'
       +(s.label ? '<span class="label">'+escapeHtml(s.label)+'</span>' : '')+'</div>'
       +'<div class="ops">'
-      +'<button class="mini arrow" title="'+t('上移')+'" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
-      +'<button class="mini arrow" title="'+t('下移')+'" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
-      +'<button class="mini danger" onclick="deleteSiteByIdx('+i+')">'+t('删除')+'</button>'
+      +'<button class="mini arrow adm" title="'+t('上移')+'" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
+      +'<button class="mini arrow adm" title="'+t('下移')+'" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
+      +'<button class="mini danger adm" onclick="deleteSiteByIdx('+i+')">'+t('删除')+'</button>'
       +'</div></div>'
       +'<div class="code-box" style="margin-top:10px">'
       +'<pre id="scode_'+i+'">'+escapeHtml(buildEmbedCode(s.site_key))+'</pre>'
       +'<div class="code-actions">'
-      +'<button class="mini" onclick="copyText(\'scode_'+i+'\')">'+t('复制埋点代码')+'</button>'
-      +(s.site_key ? '' : '<button class="mini" onclick="regenSiteKey('+i+')">'+t('启用令牌')+'</button>')
-      +'<button class="mini" onclick="regenSiteKey('+i+')">'+t('重新生成令牌')+'</button>'
+      +'<button class="mini adm" onclick="copyText(\'scode_'+i+'\')">'+t('复制埋点代码')+'</button>'
+      +(s.site_key ? '' : '<button class="mini adm" onclick="regenSiteKey('+i+')">'+t('启用令牌')+'</button>')
+      +'<button class="mini adm" onclick="regenSiteKey('+i+')">'+t('重新生成令牌')+'</button>'
       +'</div></div></div>';
   }
   el.innerHTML=h;
@@ -2302,7 +2350,120 @@ function fallbackCopy(txt){
 applyThemeAttr();
 applyI18n();
 initRangeSelector();
-loadSites();
+
+/* ---------------- 用户管理（v1.5.0 登录鉴权） ---------------- */
+function openUsers(){
+  document.getElementById('userModal').style.display='flex';
+  loadUsersList();
+}
+function closeUsers(){ document.getElementById('userModal').style.display='none'; }
+function loadUsersList(){
+  fetch(apiUrl('/api/admin/users'))
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ renderUsersList(res.data||[]); }
+      else { setTip(t('加载失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('加载失败：')+e, true); });
+}
+function renderUsersList(list){
+  var el=document.getElementById('userList'); if(!el) return;
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var u=list[i];
+    var roleTxt = u.role==='admin' ? t('管理员') : t('普通用户');
+    var stTxt = u.status==='active' ? t('启用') : t('已停用');
+    var ops='';
+    if(currentUser && u.username!==currentUser.username){
+      var uEsc=escapeHtml(u.username).replace(/'/g,'&#39;');
+      ops += '<button class="mini" onclick="userSetRole(\''+uEsc+'\',\''+(u.role==='admin'?'viewer':'admin')+'\')">'+(u.role==='admin'?t('设为普通'):t('设为管理员'))+'</button>';
+      ops += '<button class="mini" onclick="userSetStatus(\''+uEsc+'\',\''+(u.status==='active'?'disabled':'active')+'\')">'+(u.status==='active'?t('停用'):t('启用'))+'</button>';
+      ops += '<button class="mini" onclick="userResetPwd(\''+uEsc+'\')">'+t('重置密码')+'</button>';
+      ops += '<button class="mini danger" onclick="userDelete(\''+uEsc+'\')">'+t('删除')+'</button>';
+    } else {
+      ops += '<span style="color:var(--muted);font-size:12px">'+t('（当前登录）')+'</span>';
+    }
+    h += '<div class="site-item"><div class="top">'
+      +'<div class="site-main"><span class="name">'+escapeHtml(u.username)+'</span></div>'
+      +'<span class="label">'+roleTxt+'</span><span class="label"'+(u.status==='active'?'':' style="color:#dc2626"')+'>'+stTxt+'</span>'
+      +'<div class="ops">'+ops+'</div></div></div>';
+  }
+  el.innerHTML = h || '<div class="empty">'+t('暂无用户。')+'</div>';
+}
+function userAction(payload){
+  fetch(apiUrl('/api/admin/user'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ loadUsersList(); }
+      else { setTip(t('操作失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('操作失败：')+e, true); });
+}
+function userSetRole(u, role){ userAction({action:'role', username:u, role:role}); }
+function userSetStatus(u, st){ userAction({action:'status', username:u, status:st}); }
+function userDelete(u){ if(confirm(t('确定删除用户「{n}」？', u))) userAction({action:'delete', username:u}); }
+function userResetPwd(u){
+  var p=prompt(t('为 {n} 设置新密码（至少 6 位）：', u));
+  if(p===null) return;
+  if(p.length<6){ setTip(t('密码至少 6 位'), true); return; }
+  userAction({action:'reset_password', username:u, password:p});
+}
+function createUser(){
+  var u=document.getElementById('newUser').value.trim();
+  var p=document.getElementById('newUserPwd').value;
+  var role=document.getElementById('newUserRole').value;
+  if(!u||!p){ setTip(t('请输入用户名与密码'), true); return; }
+  fetch(apiUrl('/api/admin/users'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,role:role})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){
+        document.getElementById('newUser').value='';
+        document.getElementById('newUserPwd').value='';
+        setTip(t('已创建用户 {n}。', res.user));
+        loadUsersList();
+      } else { setTip(t('创建失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('创建失败：')+e, true); });
+}
+function logout(){
+  fetch(apiUrl('/api/logout'),{method:'POST'})
+    .then(function(){ location.href='/login'; })
+    .catch(function(){ location.href='/login'; });
+}
+function changeMyPwd(){
+  var oldp=prompt(t('请输入原密码：'));
+  if(oldp===null) return;
+  var newp=prompt(t('请输入新密码（至少 6 位）：'));
+  if(newp===null) return;
+  if(newp.length<6){ setTip(t('密码至少 6 位'), true); return; }
+  fetch(apiUrl('/api/user/password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:oldp,new:newp})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ setTip(t('密码已修改。')); }
+      else { setTip(t('修改失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('修改失败：')+e, true); });
+}
+
+/* 启动：先校验登录会话，再加载看板；viewer 隐藏管理员控件 */
+(function(){
+  fetch(apiUrl('/api/me'))
+    .then(function(r){ if(r.status===401){ location.href='/login'; return null; } return r.json(); })
+    .then(function(j){
+      if(!j || !j.status){ location.href='/login'; return; }
+      currentUser = j.user || null;
+      var ua=document.getElementById('userArea');
+      if(ua) ua.style.display='inline-flex';
+      var w=document.getElementById('whoami');
+      if(w && currentUser) w.textContent = currentUser.username + (currentUser.role==='admin' ? t('（管理员）') : '');
+      if(currentUser && currentUser.role!=='admin'){
+        var ads=document.querySelectorAll('.adm');
+        for(var k=0;k<ads.length;k++) ads[k].style.display='none';
+      }
+      loadSites();
+    })
+    .catch(function(){ location.href='/login'; });
+})();
 </script>
 </body>
 </html>

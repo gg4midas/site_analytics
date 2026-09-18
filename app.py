@@ -5,17 +5,17 @@
 通过网页内嵌的轻量 JS 追踪脚本（tracker.js）主动上报真实访客行为，
 由真实浏览器执行，天然规避日志中爬虫 / 监控 / 回源等噪音。
 
-启动：python3 app.py --port 8899            # 不鉴权（推荐配合反向代理 + 访问控制）
-      python3 app.py --port 8899 --token 你的令牌   # 额外加一层令牌（可选，非必需）
+启动：python3 app.py --port 8899            # 默认监听 127.0.0.1:8899（建议置于反向代理之后）
+      python3 app.py --port 8899 --create-admin 用户名 密码   # 预建管理员（无头部署引导）
 嵌入：<script src="https://你的分析域名/tracker.js" data-site="example.com" defer></script>
-面板：http://服务器IP:8899/   （启用令牌时为 http://服务器IP:8899/?token=你的令牌）
+面板：http://服务器IP:8899/   （账号登录后访问；首个注册用户自动成为管理员）
 
 特性：
 - 零必需第三方依赖（仅 Python 标准库；GeoIP 为可选增强，需 maxminddb + GeoLite2）
 - 客户端埋点：PV / 独立访客 / 会话 / 跳出率 / 平均停留时长 / 设备 / 浏览器 / 来路
 - 访客地域分布（国家 / 城市，需配置 GeoLite2；缺失则自动禁用，不影响其它功能）
 - SQLite 事件存储，按天聚合
-- 公开上报端点（/api/event，CORS 开放），查询接口可选 token 鉴权
+- 公开上报端点（/api/event，CORS 开放）；看板与查询接口账号登录鉴权（admin / viewer 权限分级）
 - 部署令牌（可选）：每站点独立令牌由面板「添加站点」自动生成并注入埋点代码，服务端落库前校验；老站点可在面板「重新生成令牌」启用。也支持全局兜底令牌 SA_DEPLOY_KEY / --deploy-key 与严格模式 --require-key。
 - 自动剔除 webdriver / 已知爬虫 UA
 - 反向代理下通过 X-Forwarded-For / X-Real-IP 还原真实访客 IP
@@ -33,6 +33,8 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 import hmac
+import hashlib
+import secrets
 import time
 from contextlib import contextmanager
 
@@ -62,12 +64,25 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.4.13"
+VERSION = "1.5.0"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
 STAY_CAP_SEC = 1800
 MAX_BODY = 64 * 1024  # 请求体上限 64KB：防慢速/超大体请求占满线程池（slowloris / DoS）
+
+# ======================== 用户账户与会话（v1.5.0 起登录鉴权取代共享 token） ========================
+# 设计：零依赖单文件。口令 PBKDF2-HMAC-SHA256（10 万轮 + 每用户随机盐）；
+# 会话为服务端签发随机 sid 存 sessions 表，HttpOnly Cookie 下发（SameSite=Lax，7 天）。
+# 权限分级：admin（全部功能：站点管理/屏蔽/设置/用户管理）、viewer（只读看板）。
+# 首个注册用户自动成为管理员；/api/event、/tracker.js 与静态资源保持公开（埋点所需）。
+SESSION_TTL_DAYS = 7        # 登录会话有效期（天）
+PWD_MIN_LEN = 6             # 密码最小长度
+PBKDF2_ITERS = 100000       # PBKDF2 迭代次数
+_USERNAME_RE = re.compile(r'^[\w\-]{2,32}$', re.UNICODE)  # 用户名：2-32 位字母/数字/下划线/连字符/中文
+_AUTH_RATE = {}             # ip -> [次数, 窗口起点]；登录/注册限流，防暴力枚举
+_AUTH_RATE_LIMIT = 10       # 每 _AUTH_RATE_WINDOW 秒内每 IP 最多尝试次数
+_AUTH_RATE_WINDOW = 300     # 限流窗口（秒）
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -361,6 +376,24 @@ class StatEngine(object):
                 c.execute('ALTER TABLE blocked_visitors ADD COLUMN asn INTEGER')
             except Exception:
                 pass
+            # 用户账户表（v1.5.0 登录鉴权）：role ∈ admin/viewer，status ∈ active/disabled
+            c.execute("""CREATE TABLE IF NOT EXISTS users(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                pwd_hash TEXT,
+                salt TEXT,
+                role TEXT DEFAULT 'viewer',
+                status TEXT DEFAULT 'active',
+                created INTEGER,
+                last_login INTEGER
+            )""")
+            # 服务端会话表（HttpOnly cookie sid）；登录会话取代旧版共享 ?token= 鉴权
+            c.execute("""CREATE TABLE IF NOT EXISTS sessions(
+                sid TEXT PRIMARY KEY,
+                uid INTEGER,
+                created INTEGER,
+                expires INTEGER
+            )""")
             # 可见事件视图：自动排除已软屏蔽访客的事件，所有站点维度统计读取均走此视图，
             # 原始 events 表保持完整（写入/清理/站点列表仍读写 events）。每次启动重建以匹配最新表结构。
             try:
@@ -708,6 +741,217 @@ class StatEngine(object):
             "FROM visible_events WHERE site IN (%s) AND type='pageview' AND ts>=? AND ts<?"
             ") WHERE rn=1" % (ph,)
         )
+
+    # ---------------- 用户账户与会话（v1.5.0 登录鉴权） ----------------
+    def _pwd_hash(self, password, salt=None):
+        """PBKDF2-HMAC-SHA256 口令哈希；salt 为空则生成 16 字节随机盐（hex）。返回 (salt_hex, hash_hex)。"""
+        if salt is None:
+            salt = secrets.token_hex(16)
+        dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), PBKDF2_ITERS)
+        return salt, dk.hex()
+
+    def count_users(self):
+        try:
+            conn = self._conn()
+            n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            conn.close()
+            return n
+        except Exception:
+            return 0
+
+    def create_user(self, username, password, role=None):
+        """创建账户。role=None 时：库内无用户则自动授予 admin（首个注册者=管理员），否则 viewer。"""
+        username = (username or '').strip()
+        if not username or not _USERNAME_RE.match(username):
+            return False, '用户名不合法（2-32 位字母/数字/下划线/连字符/中文）'
+        if not password or len(password) < PWD_MIN_LEN:
+            return False, '密码至少 %d 位' % PWD_MIN_LEN
+        try:
+            if role is None:
+                role = 'admin' if self.count_users() == 0 else 'viewer'
+            if role not in ('admin', 'viewer'):
+                role = 'viewer'
+            salt, h = self._pwd_hash(password)
+            conn = self._conn()
+            conn.execute(
+                "INSERT INTO users(username, pwd_hash, salt, role, status, created) VALUES(?,?,?,?,?,?)",
+                (username, h, salt, role, 'active', int(time.time() * 1000)))
+            conn.commit(); conn.close()
+            return True, username
+        except Exception as e:
+            return False, ('用户名已存在' if 'UNIQUE' in str(e) else str(e))
+
+    def get_user_row(self, username):
+        try:
+            conn = self._conn()
+            r = conn.execute(
+                "SELECT id,username,pwd_hash,salt,role,status,created,last_login "
+                "FROM users WHERE username=?", ((username or '').strip(),)).fetchone()
+            conn.close()
+            if not r:
+                return None
+            return dict(zip(('id', 'username', 'pwd_hash', 'salt', 'role', 'status',
+                             'created', 'last_login'), r))
+        except Exception:
+            return None
+
+    def authenticate(self, username, password):
+        """校验用户名/口令；成功返回不含敏感字段的用户 dict，失败返回 None。"""
+        u = self.get_user_row(username)
+        if not u or u.get('status') != 'active':
+            return None
+        _, h = self._pwd_hash(password or '', u['salt'])
+        if not hmac.compare_digest(h, u['pwd_hash']):
+            return None
+        try:
+            conn = self._conn()
+            conn.execute("UPDATE users SET last_login=? WHERE id=?",
+                         (int(time.time() * 1000), u['id']))
+            conn.commit(); conn.close()
+        except Exception:
+            pass
+        return {k: u[k] for k in ('id', 'username', 'role', 'status', 'created', 'last_login')}
+
+    def list_users(self):
+        try:
+            conn = self._conn()
+            rows = conn.execute(
+                "SELECT id,username,role,status,created,last_login FROM users ORDER BY id").fetchall()
+            conn.close()
+            keys = ('id', 'username', 'role', 'status', 'created', 'last_login')
+            return [dict(zip(keys, r)) for r in rows]
+        except Exception as e:
+            self._log('list_users ERROR: %s' % e)
+            return []
+
+    def _active_admin_count(self, conn=None):
+        own = conn is None
+        if own:
+            conn = self._conn()
+        n = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'").fetchone()[0]
+        if own:
+            conn.close()
+        return n
+
+    def set_user_role(self, username, role):
+        """设置角色。禁止把最后一名管理员降级，避免锁死管理能力。"""
+        if role not in ('admin', 'viewer'):
+            return False, '角色不合法'
+        u = self.get_user_row(username)
+        if not u:
+            return False, '用户不存在'
+        if u['role'] == 'admin' and role != 'admin' and self._active_admin_count() <= 1:
+            return False, '至少保留一名管理员'
+        try:
+            conn = self._conn()
+            conn.execute("UPDATE users SET role=? WHERE username=?", (role, (username or '').strip()))
+            conn.commit(); conn.close()
+            return True, 'ok'
+        except Exception as e:
+            return False, str(e)
+
+    def set_user_status(self, username, status):
+        """启用/停用账户。禁止停用最后一名启用的管理员。"""
+        if status not in ('active', 'disabled'):
+            return False, '状态不合法'
+        u = self.get_user_row(username)
+        if not u:
+            return False, '用户不存在'
+        if u['role'] == 'admin' and status != 'active' and self._active_admin_count() <= 1:
+            return False, '至少保留一名启用的管理员'
+        try:
+            conn = self._conn()
+            conn.execute("UPDATE users SET status=? WHERE username=?", (status, (username or '').strip()))
+            conn.commit(); conn.close()
+            return True, 'ok'
+        except Exception as e:
+            return False, str(e)
+
+    def reset_user_password(self, username, new_password):
+        """（管理员）重置口令。"""
+        if not new_password or len(new_password) < PWD_MIN_LEN:
+            return False, '密码至少 %d 位' % PWD_MIN_LEN
+        if not self.get_user_row(username):
+            return False, '用户不存在'
+        salt, h = self._pwd_hash(new_password)
+        try:
+            conn = self._conn()
+            conn.execute("UPDATE users SET pwd_hash=?, salt=? WHERE username=?",
+                         (h, salt, (username or '').strip()))
+            conn.commit(); conn.close()
+            return True, 'ok'
+        except Exception as e:
+            return False, str(e)
+
+    def delete_user(self, username):
+        """删除账户及其全部会话。禁止删除最后一名管理员；站点与统计数据为全站共享，不受影响。"""
+        u = self.get_user_row(username)
+        if not u:
+            return False, '用户不存在'
+        if u['role'] == 'admin' and self._active_admin_count() <= 1:
+            return False, '至少保留一名管理员'
+        try:
+            conn = self._conn()
+            conn.execute("DELETE FROM sessions WHERE uid=?", (u['id'],))
+            conn.execute("DELETE FROM users WHERE id=?", (u['id'],))
+            conn.commit(); conn.close()
+            return True, 'ok'
+        except Exception as e:
+            return False, str(e)
+
+    def change_password(self, username, old, new):
+        """本人修改口令：先校验原口令。"""
+        if not self.authenticate(username, old):
+            return False, '原密码错误'
+        return self.reset_user_password(username, new)
+
+    def create_session(self, uid, days=SESSION_TTL_DAYS):
+        sid = secrets.token_hex(24)
+        now_ms = int(time.time() * 1000)
+        try:
+            conn = self._conn()
+            conn.execute("INSERT INTO sessions(sid, uid, created, expires) VALUES(?,?,?,?)",
+                         (sid, uid, now_ms, now_ms + days * 86400000))
+            conn.commit(); conn.close()
+        except Exception:
+            pass
+        return sid
+
+    def get_session(self, sid):
+        if not sid:
+            return None
+        try:
+            now_ms = int(time.time() * 1000)
+            conn = self._conn()
+            r = conn.execute(
+                "SELECT s.uid, s.expires, u.username, u.role, u.status "
+                "FROM sessions s JOIN users u ON u.id=s.uid WHERE s.sid=?", (sid,)).fetchone()
+            if not r:
+                conn.close(); return None
+            if r[1] < now_ms or r[4] != 'active':
+                conn.execute("DELETE FROM sessions WHERE sid=?", (sid,))
+                conn.commit(); conn.close(); return None
+            conn.close()
+            return {'uid': r[0], 'expires': r[1], 'username': r[2], 'role': r[3], 'status': r[4]}
+        except Exception:
+            return None
+
+    def delete_session(self, sid):
+        try:
+            conn = self._conn()
+            conn.execute("DELETE FROM sessions WHERE sid=?", (sid,))
+            conn.commit(); conn.close()
+        except Exception:
+            pass
+
+    def purge_expired_sessions(self):
+        try:
+            conn = self._conn()
+            conn.execute("DELETE FROM sessions WHERE expires < ?", (int(time.time() * 1000),))
+            conn.commit(); conn.close()
+        except Exception:
+            pass
 
     # ---------------- 写入 ----------------
     def add_event(self, ev):
@@ -2272,6 +2516,91 @@ DEPLOY_KEY = (os.environ.get('SA_DEPLOY_KEY', '') or '').strip()
 REQUIRE_KEY = (os.environ.get('SA_REQUIRE_KEY', '0') or '0') == '1'
 
 
+# 登录/注册页（v1.5.0）：自包含单页，双 Tab 切换；已登录访问自动跳回看板
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 站点流量统计</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+         background:#f3f5f9; color:#1f2937; }
+  .card { width:360px; max-width:92vw; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+          padding:28px 28px 22px; box-shadow:0 4px 24px rgba(31,41,55,.08); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { font-size:12.5px; color:#6b7280; margin-bottom:18px; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tabs button { flex:1; padding:8px 0; border:1px solid #d1d5db; background:#fff; border-radius:8px;
+                 cursor:pointer; font-size:14px; color:#374151; }
+  .tabs button.on { background:#2563eb; border-color:#2563eb; color:#fff; }
+  label { display:block; font-size:13px; margin:10px 0 4px; color:#374151; }
+  input { width:100%; padding:9px 10px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; }
+  input:focus { outline:2px solid #93c5fd; border-color:#2563eb; }
+  .btn { width:100%; margin-top:16px; padding:10px 0; border:0; border-radius:8px; background:#2563eb;
+         color:#fff; font-size:15px; cursor:pointer; }
+  .btn:disabled { opacity:.6; cursor:default; }
+  .msg { min-height:18px; margin-top:10px; font-size:13px; color:#dc2626; text-align:center; }
+  .hint { font-size:12px; color:#9ca3af; margin-top:14px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>站点流量统计</h1>
+  <div class="sub">请登录后访问分析看板</div>
+  <div class="tabs">
+    <button id="tab-login" class="on" type="button">登录</button>
+    <button id="tab-reg" type="button">注册</button>
+  </div>
+  <form id="f">
+    <label for="u">用户名</label>
+    <input id="u" autocomplete="username" maxlength="32" required>
+    <label for="p">密码</label>
+    <input id="p" type="password" autocomplete="current-password" minlength="6" required>
+    <button class="btn" id="go" type="submit">登录</button>
+  </form>
+  <div class="msg" id="msg"></div>
+  <div class="hint">首个注册的用户自动成为管理员；其余用户为只查看板。<br>登录会话有效期 7 天，退出登录后立即失效。</div>
+</div>
+<script>
+var mode='login';
+function setMode(m){
+  mode=m;
+  document.getElementById('tab-login').className = m==='login' ? 'on' : '';
+  document.getElementById('tab-reg').className = m==='reg' ? 'on' : '';
+  document.getElementById('go').textContent = m==='login' ? '登录' : '注册并进入';
+  document.getElementById('msg').textContent='';
+  document.getElementById('p').setAttribute('autocomplete', m==='login'?'current-password':'new-password');
+}
+document.getElementById('tab-login').onclick=function(){ setMode('login'); };
+document.getElementById('tab-reg').onclick=function(){ setMode('reg'); };
+document.getElementById('f').onsubmit=function(e){
+  e.preventDefault();
+  var u=document.getElementById('u').value.trim(), p=document.getElementById('p').value;
+  var msg=document.getElementById('msg'), go=document.getElementById('go');
+  if(!u||!p){ msg.textContent='请输入用户名与密码'; return; }
+  go.disabled=true; msg.textContent='';
+  fetch('/api/'+(mode==='login'?'login':'register'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username:u, password:p})
+  }).then(function(r){ return r.json().then(function(j){ return {code:r.status, j:j}; }); })
+    .then(function(res){
+      if(res.j && res.j.status){ location.replace('/'); return; }
+      msg.textContent=(res.j&&res.j.error)||('失败 ('+res.code+')');
+      go.disabled=false;
+    })
+    .catch(function(){ msg.textContent='网络错误，请重试'; go.disabled=false; });
+};
+// 已登录则直接进入看板
+fetch('/api/me').then(function(r){ if(r.ok) location.replace('/'); }).catch(function(){});
+</script>
+</body>
+</html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     engine = None
     token = DEFAULT_TOKEN
@@ -2290,6 +2619,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', cors)
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+        if not getattr(self, '_head_mode', False):
+            self.wfile.write(data)
+
+    def _send_html(self, html, code=200):
+        data = html.encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         if not getattr(self, '_head_mode', False):
             self.wfile.write(data)
@@ -2330,12 +2669,58 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.send_error(404)
 
-    def _check_token(self, query):
-        if not self.token:
+    # ---------------- 登录鉴权（v1.5.0：会话 cookie 取代共享 ?token=） ----------------
+    def _read_cookie(self, name):
+        c = self.headers.get('Cookie', '')
+        for part in c.split(';'):
+            part = part.strip()
+            if part.startswith(name + '='):
+                return part[len(name) + 1:].strip('"')
+        return ''
+
+    def _current_user(self):
+        """从会话 cookie 解析当前登录用户；未登录/过期/停用返回 None。"""
+        sid = self._read_cookie('sid')
+        return self.engine.get_session(sid) if sid else None
+
+    def _auth(self, require_admin=False):
+        """API 守卫：未登录回 401，权限不足回 403；通过则返回用户 dict（调用方直接 return）。"""
+        user = self._current_user()
+        if not user:
+            self._send_json({'status': False, 'error': '未登录'}, 401)
+            return None
+        if require_admin and user.get('role') != 'admin':
+            self._send_json({'status': False, 'error': '需要管理员权限'}, 403)
+            return None
+        return user
+
+    def _auth_page(self):
+        """页面守卫：未登录 302 跳转 /login；已登录返回用户 dict。"""
+        user = self._current_user()
+        if not user:
+            self.send_response(302)
+            self.send_header('Location', '/login')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return None
+        return user
+
+    def _set_session_cookie(self, sid):
+        self.send_header('Set-Cookie', 'sid=%s; HttpOnly; Path=/; Max-Age=%d; SameSite=Lax'
+                         % (sid, SESSION_TTL_DAYS * 86400))
+
+    def _auth_rate_ok(self):
+        """登录/注册限流：每 IP 每 5 分钟最多 10 次，防暴力枚举。"""
+        ip = self.client_ip()
+        now = time.time()
+        ent = _AUTH_RATE.get(ip)
+        if ent is None or now - ent[1] > _AUTH_RATE_WINDOW:
+            _AUTH_RATE[ip] = [1, now]
+            if len(_AUTH_RATE) > 10000:
+                _AUTH_RATE.clear()
             return True
-        # P1-6：用 hmac.compare_digest 做常量时间比较，避免令牌比较的时序侧信道
-        provided = query.get('token', [''])[0]
-        return hmac.compare_digest(provided, self.token)
+        ent[0] += 1
+        return ent[0] <= _AUTH_RATE_LIMIT
 
     def _deploy_ok(self, ev):
         """站点部署令牌校验（防 tracker 盗用 / 抗压）。
@@ -2387,8 +2772,9 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         if path in ('/api/site', '/api/site/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 删除站点（含全部数据）属破坏性管理操作：仅管理员
+            if not self._auth(require_admin=True):
+                return
             site = query.get('site', [''])[0]
             ok = self.engine.remove_site(site)
             self._send_json({'status': ok})
@@ -2451,8 +2837,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/sites', '/api/sites/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             try:
                 sites = self.engine.get_sites()
                 self._send_json({'status': True, 'sites': sites})
@@ -2461,8 +2846,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/site', '/api/site/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             try:
                 sites = self.engine.list_sites()
                 self._send_json({'status': True, 'sites': sites})
@@ -2471,8 +2855,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/months', '/api/months/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             site = query.get('site', [''])[0]
             try:
                 months = self.engine.get_months(site)
@@ -2482,8 +2865,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/stats', '/api/stats/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             site = query.get('site', [''])[0]
             days = query.get('days', ['30'])[0]
             range_str = query.get('range', [''])[0]
@@ -2498,8 +2880,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/recent', '/api/recent/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             site = query.get('site', [''])[0]
             window = query.get('window', ['10'])[0]
             limit = query.get('limit', ['500'])[0]
@@ -2515,8 +2896,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/admin/settings', '/api/admin/settings/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             try:
                 days = self.engine.get_retention_days()
                 tz = self.engine.get_timezone_offset()
@@ -2528,8 +2908,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/visitors', '/api/visitors/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             site = query.get('site', [''])[0]
             days = query.get('days', ['30'])[0]
             range_str = query.get('range', [''])[0]
@@ -2551,8 +2930,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path in ('/api/admin/blocked', '/api/admin/blocked/'):
-            if not self._check_token(query):
-                self._send_json({'error': 'token 错误'}, 401); return
+            if not self._auth(): return
             site = query.get('site', [''])[0]
             try:
                 blocked = self.engine.get_blocked_visitors(site or None)
@@ -2561,7 +2939,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
 
+        if path == '/login':
+            self._send_html(_LOGIN_HTML)
+            return
+
+        if path in ('/api/me', '/api/me/'):
+            user = self._current_user()
+            if user:
+                self._send_json({'status': True, 'user': {'username': user['username'],
+                                                          'role': user['role']}})
+            else:
+                self._send_json({'status': False, 'error': '未登录'}, 401)
+            return
+
+        if path in ('/api/admin/users', '/api/admin/users/'):
+            # 用户列表（仅管理员）
+            if not self._auth(require_admin=True): return
+            try:
+                self._send_json({'status': True, 'data': self.engine.list_users()})
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+
         if path in ('/', '/index.html'):
+            if not self._auth_page(): return
             idx = os.path.join(self.www_root, 'index.html')
             # index.html 是前端主壳，升级后必须立即生效；关闭浏览器长缓存（每次请求都通过 ETag 重新验证）
             self._send_file(idx, 'text/html; charset=utf-8', cache_seconds=0)
@@ -2614,8 +3015,8 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         if path in ('/api/admin/block', '/api/admin/block/'):
             # 确认为异常爬虫后软屏蔽该访客：保留原始事件，统计读取时排除（可恢复）
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2641,8 +3042,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ('/api/admin/unblock', '/api/admin/unblock/'):
             # 解除软屏蔽：其历史数据重新计入统计
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2661,8 +3062,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
         if path in ('/api/admin/settings', '/api/admin/settings/'):
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2700,8 +3101,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
         if path in ('/api/site/reorder', '/api/site/reorder/'):
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2718,8 +3119,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
         if path in ('/api/site', '/api/site/'):
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2736,8 +3137,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ('/api/site/key', '/api/site/key/'):
             # 重新生成某站点的每站点部署令牌（启用 / 轮换防盗用令牌）；须在面板用新代码重新嵌入
-            if not self._check_token(parse_qs(parsed.query)):
-                self._send_json({'error': 'token 错误'}, 401); return
+            # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
+            if not self._auth(require_admin=True): return
             try:
                 raw = self._read_body()
                 body = {}
@@ -2755,6 +3156,127 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute("UPDATE sites SET site_key=? WHERE site=?", (new_key, site))
                 conn.commit(); conn.close()
                 self._send_json({'status': True, 'site': site, 'site_key': new_key})
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+        if path in ('/api/register', '/api/register/'):
+            # 公开注册：首个用户自动成为管理员，其余为 viewer；注册成功即登录（种下会话 cookie）
+            if not self._auth_rate_ok():
+                self._send_json({'status': False, 'error': '尝试过于频繁，请稍后再试'}, 429); return
+            try:
+                body = {}
+                raw = self._read_body()
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                ok, info = self.engine.create_user(body.get('username', ''), body.get('password', ''))
+                if not ok:
+                    self._send_json({'status': False, 'error': info}, 400); return
+                u = self.engine.get_user_row(info)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self._set_session_cookie(self.engine.create_session(u['id']))
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+        if path in ('/api/login', '/api/login/'):
+            if not self._auth_rate_ok():
+                self._send_json({'status': False, 'error': '尝试过于频繁，请稍后再试'}, 429); return
+            try:
+                body = {}
+                raw = self._read_body()
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                u = self.engine.authenticate(body.get('username', ''), body.get('password', ''))
+                if not u:
+                    self._send_json({'status': False, 'error': '用户名或密码错误'}, 401); return
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self._set_session_cookie(self.engine.create_session(u['id']))
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+        if path in ('/api/logout', '/api/logout/'):
+            self.engine.delete_session(self._read_cookie('sid'))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if path in ('/api/user/password', '/api/user/password/'):
+            # 本人修改口令（需原密码）
+            ctx = self._auth()
+            if not ctx: return
+            try:
+                body = {}
+                raw = self._read_body()
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                ok, msg = self.engine.change_password(ctx['username'], body.get('old', ''), body.get('new', ''))
+                self._send_json({'status': ok} if ok else {'status': False, 'error': msg},
+                                200 if ok else 400)
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+        if path in ('/api/admin/users', '/api/admin/users/'):
+            # 管理员创建账户（可指定角色）
+            ctx = self._auth(require_admin=True)
+            if not ctx: return
+            try:
+                body = {}
+                raw = self._read_body()
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                ok, info = self.engine.create_user(
+                    body.get('username', ''), body.get('password', ''),
+                    (body.get('role') or 'viewer'))
+                self._send_json({'status': ok, 'user': info} if ok else {'status': False, 'error': info},
+                                200 if ok else 400)
+            except Exception as e:
+                self._send_json({'status': False, 'error': str(e)}, 500)
+            return
+        if path in ('/api/admin/user', '/api/admin/user/'):
+            # 管理员单用户操作：role / status / reset_password / delete
+            ctx = self._auth(require_admin=True)
+            if not ctx: return
+            try:
+                body = {}
+                raw = self._read_body()
+                if raw:
+                    try:
+                        body = json.loads(raw.decode('utf-8'))
+                    except Exception:
+                        body = {}
+                act = body.get('action', '')
+                uname = body.get('username', '')
+                if act == 'role':
+                    ok, msg = self.engine.set_user_role(uname, body.get('role', ''))
+                elif act == 'status':
+                    ok, msg = self.engine.set_user_status(uname, body.get('status', ''))
+                elif act == 'reset_password':
+                    ok, msg = self.engine.reset_user_password(uname, body.get('password', ''))
+                elif act == 'delete':
+                    ok, msg = self.engine.delete_user(uname)
+                else:
+                    ok, msg = False, '未知操作'
+                self._send_json({'status': ok} if ok else {'status': False, 'error': msg},
+                                200 if ok else 400)
             except Exception as e:
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
@@ -2801,7 +3323,9 @@ def main():
     ap = argparse.ArgumentParser(description='站点流量统计（埋点版）')
     ap.add_argument('--host', default=DEFAULT_HOST, help='监听地址 (默认 127.0.0.1)')
     ap.add_argument('--port', type=int, default=DEFAULT_PORT, help='监听端口 (默认 8899)')
-    ap.add_argument('--token', default=DEFAULT_TOKEN, help='面板访问令牌 (留空则不鉴权)')
+    ap.add_argument('--token', default=DEFAULT_TOKEN, help=argparse.SUPPRESS)  # 已废弃：v1.5.0 起账号登录；保留参数以兼容旧 systemd 单元
+    ap.add_argument('--create-admin', nargs=2, metavar=('用户名', '密码'), default=None,
+                    help='预建管理员账户后退出（无头部署引导）；不传则首个注册用户自动成为管理员')
     ap.add_argument('--deploy-key', default=os.environ.get('SA_DEPLOY_KEY', ''),
                     help='全局兜底部署令牌（防 tracker 盗用）：设后可作所有站点的统一令牌；每站点独立令牌由面板「添加站点」自动生成')
     ap.add_argument('--require-key', action='store_true',
@@ -2813,9 +3337,18 @@ def main():
 
     os.makedirs(args.data_dir, exist_ok=True)
     engine = StatEngine(data_dir=args.data_dir, geo_db=args.geoip_db, asn_db=args.asn_db)
+    # 预建管理员（无头部署引导）：创建后即退出
+    if args.create_admin:
+        ok, info = engine.create_user(args.create_admin[0], args.create_admin[1], role='admin')
+        print(('已创建管理员账户: %s' % info) if ok else ('创建失败: %s' % info))
+        sys.exit(0 if ok else 1)
     # P0-G：启动治理改为后台线程异步执行，避免大库下 cleanup / auto_block / clean_stored_paths
     # 全表扫描阻塞 serve_forever 启动；守护线程随主进程退出，异常不影响服务启动与运行。
     def _run_startup_tasks():
+        try:
+            engine.purge_expired_sessions()
+        except Exception:
+            pass
         try:
             deleted = engine.cleanup_old_events()
             if deleted:
@@ -2837,7 +3370,6 @@ def main():
     _startup_thread = threading.Thread(target=_run_startup_tasks, daemon=True)
     _startup_thread.start()
     Handler.engine = engine
-    Handler.token = args.token
     Handler.deploy_key = (args.deploy_key or '').strip() or DEPLOY_KEY
     Handler.require_key = bool(args.require_key) or REQUIRE_KEY
     Handler.www_root = os.path.dirname(os.path.abspath(__file__))
@@ -2867,7 +3399,7 @@ def main():
         raise
     url = 'http://%s:%d/' % (args.host if args.host != '0.0.0.0' else '<服务器IP>', args.port)
     if args.token:
-        url += '?token=' + args.token
+        print('[提示] --token 已废弃（v1.5.0 起使用账号登录鉴权），该参数已被忽略。')
     print('=' * 60)
     print('站点流量统计（埋点版）已启动')
     print('监听: %s:%d' % (args.host, args.port))
@@ -2880,10 +3412,8 @@ def main():
         print('ASN(运营商): 已启用 (%s)' % args.asn_db)
     else:
         print('ASN(运营商): 未启用（放置 geoip/GeoLite2-ASN.mmdb 可识别访客运营商）')
-    if args.token:
-        print('面板令牌: %s' % args.token)
-    else:
-        print('面板鉴权: 未启用 (建议配合反向代理 + 访问控制)')
+    print('面板鉴权: 账号登录（admin / viewer 权限分级；首个注册用户自动成为管理员，')
+    print('          或用 --create-admin 用户名 密码 预建；旧 --token 参数已废弃忽略）')
     print('面板地址: %s' % url)
     print('嵌入代码: <script src="http://%s:%d/tracker.js" data-site="你的域名" defer></script>'
           % (args.host if args.host != '0.0.0.0' else '<服务器IP>', args.port))

@@ -26,7 +26,7 @@ By embedding a tiny JS snippet (`tracker.js`) into the pages you want to track, 
 - **Time ranges**: Last 1 day / 7 days / 30 days, aggregated by day.
 - **Site management**: Manually add sites from the panel; auto-generates the instrumentation snippet that already includes the per-site deploy token, one-click copy; supports deregistering (preserves already-collected events).
 - **SQLite event storage**, aggregated queries by day, single file easy to back up.
-- **Public reporting endpoint** (`/api/event`, CORS open); dashboard and query APIs have **optional token auth (off by default, not required)**.
+- **Public reporting endpoint** (`/api/event`, CORS open); dashboard and query APIs are protected by **account login (v1.5.0+, admin / viewer roles)**.
 - **Anti-fraud**: Automatically filters `navigator.webdriver` and known crawler UAs.
 - **Reverse-proxy friendly**: Restores the real visitor IP via `X-Forwarded-For` / `X-Real-IP`.
 
@@ -123,16 +123,16 @@ cd site_analytics
 # If GitHub is slow in your region, use the Gitee mirror (synced with GitHub):
 git clone https://gitee.com/operations-go_0/site_analytics.git
 
-# 2. Start (listens on 127.0.0.1:8899 by default, no token, no third-party libs)
+# 2. Start (listens on 127.0.0.1:8899 by default, no third-party libs)
 python3 app.py
 
 # 3. Open the dashboard in a browser
-#    http://localhost:8899/
+#    http://localhost:8899/    (unauthenticated visits redirect to the /login page — register there; the first registered account becomes the admin)
 ```
 
 After the dashboard starts, embed the snippet (see "Embed the Snippet" below) into the site you want to track; data will appear automatically once visitors arrive.
 
-> To customize the port / listen address / token / data directory, see "Configuration".
+> To customize the port / listen address / data directory, see "Configuration"; for accounts and permissions see "Users & Permissions".
 
 ---
 
@@ -144,7 +144,7 @@ All parameters are passed on the command line — there is no config file:
 |-----------|---------|-------|
 | `--host` | `127.0.0.1` | Listen address. In production keep `127.0.0.1` and expose via reverse proxy; set `0.0.0.0` to expose publicly (not recommended). |
 | `--port` | `8899` | Listen port. |
-| `--token` | empty (no auth) | Optional access token for the dashboard and query APIs. Empty = fully open; when set, the dashboard requires `?token=xxx`. |
+| `--create-admin USER PASSWORD` | none | Create an admin account and exit (headless bootstrap). The first user registered via the register page automatically becomes the admin; this flag is handy for scripted deployments. |
 | `--data-dir` | `./data` | Data storage directory (holds `events.db`, logs). Can point to another disk/mount. |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP city database path. Geographic features auto-disable if the file is absent. |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN database path, used to identify the visitor's ISP. |
@@ -152,22 +152,42 @@ All parameters are passed on the command line — there is no config file:
 Examples:
 
 ```bash
-# Localhost only, custom port, no auth (most common with reverse proxy + access control)
+# Localhost only, custom port (most common with a reverse proxy; dashboard uses account login)
 python3 app.py --host 127.0.0.1 --port 8899
 
-# Add an independent token to protect the dashboard
-python3 app.py --host 127.0.0.1 --port 8899 --token YOUR_TOKEN
+# Scripted deployment: pre-create an admin account (the process exits right after)
+python3 app.py --create-admin admin YOUR_PASSWORD
 
 # Store data on a separate mount and enable the geo database
 python3 app.py --data-dir /var/lib/site_analytics --geoip-db /opt/geo/GeoLite2-City.mmdb
 ```
 
-> **About the token**: It is not required. When `--token` is omitted, the dashboard and all query APIs are fully open — anyone who knows the address can access them.
-> If your analytics domain already has access control (basic auth / known only to you / internal network), you can skip the token entirely.
-> Pass `--token` only when you want an extra independent password layer on the dashboard.
+> **`--token` is deprecated**: since v1.5.0 the dashboard uses account login; the flag is kept but ignored (old systemd units keep working). The old `?token=xxx` access method no longer works — register / log in to use the dashboard.
 
-> **Why there is no built-in user-management system**: This project is positioned as a self-hosted personal-use tool; access control is delegated to the deployment layer — for example a reverse proxy's basic auth, internal-network isolation, or reusing the website's existing login system. In-app account registration / login / multi-tenant isolation is not implemented.
-> For multi-user scenarios, we recommend adding authentication on the reverse proxy (Nginx / Caddy), or extending the account system on top of `--token`. A full user-management module is an optional enhancement, outside the scope of the current version.
+## Users & Permissions
+
+Since v1.5.0 the dashboard ships built-in account login, which **fully replaces the old `?token=` access token**: unauthenticated visits to the dashboard redirect to the `/login` page, and every query API returns 401.
+
+### Registration & Login
+
+- First use: open the dashboard in a browser → you are redirected to `/login` → switch to the "Register" tab and create an account. **The first registered account automatically becomes the admin.**
+- Registration logs you in immediately; the session lives in an HttpOnly cookie, valid for 7 days. After expiry or clicking "Log out" in the top bar you must sign in again.
+- Alternatively, pre-create an admin headlessly: `python3 app.py --create-admin USER PASSWORD` (creates the account and exits; suitable for systemd / scripted deploys).
+
+### Roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | Everything: add/remove sites, per-site deploy tokens, retention / cleanup-now, visitor blocking & restore, stats timezone, user management (create / change role / disable / reset password / delete) |
+| `viewer` | Read-only: see the full analytics dashboard and data, cannot change anything |
+
+- At least one admin always exists: the last admin cannot be demoted / disabled / deleted.
+- Login and registration are rate-limited per IP (10 attempts / 5 minutes); passwords are stored with PBKDF2-SHA256 (100k iterations + per-user random salt); session tokens are 48-char random hex values.
+- Signed-in users can change their own password via "Change Password" in the top bar (requires the current password).
+
+### Public endpoints
+
+Only the following require no login: `/api/event` (event reporting), `/tracker.js`, `/static/*` assets, the `/login` page and the register / login / session-info APIs. Everything else requires login; admin-only APIs additionally require the admin role.
 
 ---
 
@@ -178,9 +198,8 @@ python3 app.py --data-dir /var/lib/site_analytics --geoip-db /opt/geo/GeoLite2-C
 The repo ships `start.sh` / `restart.sh`, which auto-`cd` to their own directory and start in the background via `nohup`, writing logs to `run.log`:
 
 ```bash
-bash start.sh                       # default port 8899, no token
-PORT=8899 TOKEN=YOUR_TOKEN bash start.sh
-bash start.sh --port 8899 --token YOUR_TOKEN
+bash start.sh                       # default port 8899 (account login auth)
+PORT=8899 bash start.sh
 
 bash restart.sh                    # frees the port before restarting
 ```
@@ -191,7 +210,7 @@ Copy the example unit to the system directory and enable boot-time start:
 
 ```bash
 sudo cp site_analytics.service /etc/systemd/system/
-sudo nano /etc/systemd/system/site_analytics.service   # edit WorkingDirectory and ExecStart paths/token
+sudo nano /etc/systemd/system/site_analytics.service   # edit WorkingDirectory and ExecStart paths
 sudo systemctl daemon-reload
 sudo systemctl enable --now site_analytics
 ```
@@ -200,10 +219,11 @@ Key lines in the unit file (default example):
 
 ```
 WorkingDirectory=/opt/site_analytics
-ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899 --token YOUR_TOKEN
+ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899
 ```
 
-> After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path; remove the `--token` segment if you do not use a token.
+> After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path.
+> For a first deployment run `python3 app.py --create-admin USER PASSWORD` once to pre-create the admin (or create it via the register page afterwards — the first registered account becomes the admin). If an old systemd unit still has a `--token` segment, you may remove it or leave it — the flag is deprecated and ignored.
 
 ### 3) Reverse proxy (generic, not bound to any panel)
 
@@ -235,7 +255,7 @@ server {
         client_max_body_size 256k;       # reports are mostly sendBeacon/fetch, relax size limit
     }
 
-    # ---- Rest of the dashboard: optionally add basic-auth protection (or use --token) ----
+    # ---- Rest of the dashboard: the app has built-in account login; basic auth is optional ----
     location / {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
@@ -243,8 +263,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # To protect the dashboard with basic auth, uncomment the two lines below
-        # and pre-generate the password file with `htpasswd`
+        # Since v1.5.0 the dashboard has built-in account login (unauthenticated visits
+        # redirect to /login), so extra auth is usually unnecessary. To still add basic
+        # auth, uncomment the two lines below and pre-generate the file with `htpasswd`
         # auth_basic "Restricted";
         # auth_basic_user_file /etc/nginx/conf.d/analytics.htpasswd;
     }
@@ -457,17 +478,31 @@ Geographic distribution depends on the MaxMind GeoLite2 database and is **disabl
 |----------|------|-------|
 | `GET  /tracker.js` | none | Returns the tracking script |
 | `POST/GET /api/event` | none | Receives reported events (JSON / form / image beacon) |
-| `GET  /api/sites` | token* | Site list (manual registration ∪ event-discovered, deduplicated) |
-| `GET  /api/stats?site=&days=` | token* | Aggregated stats |
-| `GET  /api/recent?site=&limit=` | token* | Recent events (real-time monitoring) |
-| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | token* | Visitor details (with suspect / inquiry counts; filterable by source, referrer domain, inquiry) |
-| `GET  /api/months?site=` | token* | List of months with data for the site (dashboard month switch) |
-| `GET  /api/site` | token* | Manually registered sites, labels, and per-site deploy tokens |
-| `POST /api/site` | token* | Add site `{"site","label"}`; auto-generates a unique per-site deploy token |
-| `POST /api/site/key` | token* | Regenerate the deploy token for a site `{"site"}` |
-| `DELETE /api/site?site=` | token* | Remove site registration (and its events) |
+| `GET  /login` | none | Self-contained login / register page |
+| `POST /api/register` | none | Register a new user (IP rate-limited; auto-login via session cookie on success; the first registered account becomes the admin) |
+| `POST /api/login` | none | Log in (IP rate-limited; sets the session cookie on success) |
+| `POST /api/logout` | none | Log out (clears the session cookie) |
+| `GET  /api/me` | none | Current user `{user:{username,role}}`; 401 when not signed in |
+| `GET  /api/sites` | login | Site list (manual registration ∪ event-discovered, deduplicated) |
+| `GET  /api/stats?site=&days=` | login | Aggregated stats |
+| `GET  /api/recent?site=&limit=` | login | Recent events (real-time monitoring) |
+| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | login | Visitor details (with suspect / inquiry counts; filterable by source, referrer domain, inquiry) |
+| `GET  /api/months?site=` | login | List of months with data for the site (dashboard month switch) |
+| `GET  /api/site` | login | Manually registered sites, labels, and per-site deploy tokens |
+| `GET  /api/admin/settings` | login | Read retention / timezone / lead-pattern settings |
+| `GET  /api/admin/blocked` | login | Blocked-visitors list |
+| `POST /api/user/password` | login | Change your own password `{"old","new"}` (requires the current password) |
+| `POST /api/site` | admin | Add site `{"site","label"}`; auto-generates a unique per-site deploy token |
+| `POST /api/site/key` | admin | Regenerate the deploy token for a site `{"site"}` |
+| `POST /api/site/reorder` | admin | Save site order `{"order":[...]}` |
+| `POST /api/admin/settings` | admin | Save retention / timezone / lead patterns / cleanup-now |
+| `POST /api/admin/block` | admin | Soft-block a visitor (raw events kept, excluded from stats, recoverable) |
+| `POST /api/admin/unblock` | admin | Remove the soft block |
+| `DELETE /api/site?site=` | admin | Remove site registration (and its events) |
+| `GET/POST /api/admin/users` | admin | List users / create a user (role optional) |
+| `POST /api/admin/user` | admin | Per-user action `{"username","action"}`: role / status / reset_password / delete (the last admin is protected) |
 
-> `token*`: validated only when the backend was started with `--token`; if no token is set, everything is open (same as other query APIs).
+> Auth uses the session cookie (sent automatically after login, HttpOnly); protected APIs return 401 when not signed in, and viewers get 403 on admin APIs.
 
 ---
 

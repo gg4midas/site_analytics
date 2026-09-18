@@ -20,7 +20,7 @@
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.4.10"
+CONSOLE_VER="1.5.0"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -197,7 +197,7 @@ do_status() {
     echo "端口监听 : ${host}:${p} 未监听"
   fi
   tok="$(read_cfg token)"
-  if [ -n "$tok" ]; then echo "访问令牌 : 已设置（面板需 ?token=...）"; else echo "访问令牌 : 未设置（建议配合反向代理 + 访问控制）"; fi
+  if [ -n "$tok" ]; then echo "访问令牌 : 已设置（v1.5.0 起已废弃忽略，请使用账号登录）"; else echo "访问令牌 : 未设置（账号登录鉴权已内建）"; fi
   echo "应用版本 : $(app_version)"
 }
 

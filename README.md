@@ -28,7 +28,7 @@
 - **时间范围**：近 1 天 / 近 7 天 / 近 30 天，按天聚合。
 - **站点管理**：面板内手动添加站点，自动生成已含部署令牌的埋点代码，一键复制；支持删除站点（含其全部数据）。
 - **SQLite 事件存储**，按天聚合查询，单文件易备份。
-- **公开上报端点**（`/api/event`，CORS 开放），面板与查询接口**可选 token 鉴权（默认关闭，非必需）**。
+- **公开上报端点**（`/api/event`，CORS 开放）；看板与查询接口**账号登录鉴权**（v1.5.0 起，admin / viewer 权限分级）。
 - **反作弊**：自动剔除 `navigator.webdriver` 与已知爬虫 UA。
 - **反向代理友好**：通过 `X-Forwarded-For` / `X-Real-IP` 还原真实访客 IP。
 
@@ -126,16 +126,16 @@ cd site_analytics
 # 国内访问 GitHub 缓慢时，可用 Gitee 镜像（与 GitHub 同步）：
 git clone https://gitee.com/operations-go_0/site_analytics.git
 
-# 2. 启动（默认监听 127.0.0.1:8899，无令牌，不依赖任何第三方库）
+# 2. 启动（默认监听 127.0.0.1:8899，不依赖任何第三方库）
 python3 app.py
 
-# 3. 浏览器打开面板
-#    http://localhost:8899/
+# 3. 浏览器打开面板，注册 / 登录后使用
+#    http://localhost:8899/    （未登录会自动跳转到 /login 登录页）
 ```
 
 面板启动后，在你要统计的网站里嵌入埋点脚本（见下文「嵌入埋点代码」），有人访问后数据会自动出现。
 
-> 想自定义端口 / 监听地址 / 令牌 / 数据目录，见「配置项」。
+> 想自定义端口 / 监听地址 / 数据目录，见「配置项」；用户与权限说明见「用户与权限」。
 
 ---
 
@@ -147,7 +147,7 @@ python3 app.py
 |------|--------|------|
 | `--host` | `127.0.0.1` | 监听地址。生产建议保持 `127.0.0.1`，由反向代理对外暴露；若直接暴露公网可设为 `0.0.0.0`（不推荐）。 |
 | `--port` | `8899` | 监听端口。 |
-| `--token` | 空（不鉴权） | 面板与查询接口的可选访问令牌。留空则完全开放；设置后访问面板需带 `?token=xxx`。 |
+| `--create-admin 用户名 密码` | 无 | 以管理员身份创建账户后退出（无头引导）。首个通过注册页注册的用户自动成为管理员；此参数适合脚本化部署预建账号。 |
 | `--data-dir` | `./data` | 数据存储目录（放 `events.db`、日志）。可指向其它磁盘/挂载点。 |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP 城市库路径。文件不存在时地域功能自动禁用。 |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN 库路径，用于识别访客运营商。 |
@@ -155,22 +155,42 @@ python3 app.py
 示例：
 
 ```bash
-# 仅本机、自定义端口、不鉴权（配合反向代理 + 访问控制最常用）
+# 仅本机、自定义端口（配合反向代理最常用；面板走账号登录）
 python3 app.py --host 127.0.0.1 --port 8899
 
-# 叠加一层独立令牌保护面板
-python3 app.py --host 127.0.0.1 --port 8899 --token 你的令牌
+# 脚本化部署：直接预建管理员账户（创建后立即退出）
+python3 app.py --create-admin admin 你的密码
 
 # 数据存到独立挂载点，并启用地理库
 python3 app.py --data-dir /var/lib/site_analytics --geoip-db /opt/geo/GeoLite2-City.mmdb
 ```
 
-> **关于令牌（token）**：它不是必需的。省略 `--token` 时面板与所有查询接口完全开放，任何知道地址的人都能访问。
-> 若你的分析域名本身已做访问控制（basic auth / 仅自己知晓 / 内网），完全可以不用令牌；
-> 反之希望面板再叠一层独立口令，才传 `--token`。
+> **`--token` 已废弃**：v1.5.0 起面板改用账号登录鉴权，该参数保留但被忽略（兼容旧 systemd 单元，传入不会再报错）。旧的 `?token=xxx` 访问方式已失效，请注册 / 登录后使用面板。
 
-> **为什么没有内置用户管理系统**：本项目定位为自托管自用工具，访问控制交由部署层承担——例如反向代理的 basic auth、内网隔离，或直接复用网站层已有的账户登录体系。应用内未实现账号注册 / 登录 / 多租户隔离。
-> 如需多用户场景，推荐在反向代理（Nginx / Caddy）叠加认证，或自行在 `--token` 之上扩展账号体系；完整的用户管理模块属于可选增强，不在当前版本范围内。
+## 用户与权限
+
+v1.5.0 起面板内置账号登录鉴权，**登录完全取代旧的 `?token=` 访问令牌**：未登录用户访问面板会跳转到 `/login` 登录页，全部查询 API 返回 401。
+
+### 注册与登录
+
+- 首次使用：浏览器打开面板 → 自动跳转 `/login` → 切到「注册」创建账户。**首个注册的账户自动成为管理员**。
+- 注册成功即自动登录；会话以 Cookie（HttpOnly）保存，有效期 7 天，过期或点击顶栏「退出」后需重新登录。
+- 也可用启动参数无头预建管理员：`python3 app.py --create-admin 用户名 密码`（创建后立即退出，适合 systemd / 脚本部署）。
+
+### 权限分级
+
+| 角色 | 权限 |
+|------|------|
+| `admin` 管理员 | 全部功能：站点增删、埋点令牌管理、数据保留期 / 立即清理、访客屏蔽与恢复、统计时区、用户管理（建号 / 改角色 / 停用 / 重置密码 / 删除） |
+| `viewer` 普通用户 | 只读：查看全部分析看板与数据，不能修改任何设置 |
+
+- 系统始终保留至少一名管理员：最后一名管理员不可被降级 / 停用 / 删除。
+- 登录 / 注册接口按来源 IP 限流（10 次 / 5 分钟）；密码以 PBKDF2-SHA256（10 万次迭代 + 每用户随机盐）存储，会话令牌为 48 位十六进制随机值。
+- 已登录用户可在顶栏「改密码」修改自己的密码（需验证原密码）。
+
+### 公开端点
+
+仅以下端点无需登录：`/api/event`（埋点上报）、`/tracker.js`、`/static/*` 静态资源、`/login` 登录页及注册 / 登录 / 会话查询接口。其余接口一律需要登录，管理类接口仅限管理员。
 
 ---
 
@@ -181,9 +201,8 @@ python3 app.py --data-dir /var/lib/site_analytics --geoip-db /opt/geo/GeoLite2-C
 仓库自带 `start.sh` / `restart.sh`，会自动 `cd` 到自身目录并以 `nohup` 后台启动，日志写入 `run.log`：
 
 ```bash
-bash start.sh                       # 默认端口 8899，无令牌
-PORT=8899 TOKEN=你的令牌 bash start.sh
-bash start.sh --port 8899 --token 你的令牌
+bash start.sh                       # 默认端口 8899（账号登录鉴权）
+PORT=8899 bash start.sh
 
 bash restart.sh                    # 先释放端口再重启
 ```
@@ -194,7 +213,7 @@ bash restart.sh                    # 先释放端口再重启
 
 ```bash
 sudo cp site_analytics.service /etc/systemd/system/
-sudo nano /etc/systemd/system/site_analytics.service   # 修改 WorkingDirectory 与 ExecStart 里的路径/令牌
+sudo nano /etc/systemd/system/site_analytics.service   # 修改 WorkingDirectory 与 ExecStart 里的路径
 sudo systemctl daemon-reload
 sudo systemctl enable --now site_analytics
 ```
@@ -203,10 +222,11 @@ sudo systemctl enable --now site_analytics
 
 ```
 WorkingDirectory=/opt/site_analytics
-ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899 --token 你的令牌
+ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899
 ```
 
-> 把代码放到 `/opt/site_analytics` 后，将上面的 `/opt/site_analytics` 改成你的实际路径；不用令牌则删掉 `--token` 段。
+> 把代码放到 `/opt/site_analytics` 后，将上面的 `/opt/site_analytics` 改成你的实际路径。
+> 首次部署先执行一次 `python3 app.py --create-admin 用户名 密码` 预建管理员（或启动后通过注册页创建，首个注册用户自动成为管理员）。旧版本 systemd 单元里若有 `--token` 段，删除或保留均可（该参数已废弃、被忽略）。
 
 ### 3) 反向代理（通用，不绑定任何面板）
 
@@ -239,7 +259,7 @@ server {
         client_max_body_size 256k;       # 上报多为 sendBeacon/fetch，放宽体积限制
     }
 
-    # ---- 面板其余路径：可选加 basic auth 保护（也可改用 --token）----
+    # ---- 面板其余路径：应用内已内置账号登录鉴权，basic auth 可选叠加 ----
     location / {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
@@ -247,7 +267,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # 如需基础认证保护面板，取消下面两行，并提前用 `htpasswd` 生成密码文件
+        # v1.5.0 起面板自带账号登录（未登录自动跳 /login），一般无需再叠加认证；
+        # 如仍想加一层 basic auth，取消下面两行，并提前用 `htpasswd` 生成密码文件
         # auth_basic "Restricted";
         # auth_basic_user_file /etc/nginx/conf.d/analytics.htpasswd;
     }
@@ -475,17 +496,31 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 |------|------|------|
 | `GET  /tracker.js` | 无 | 返回埋点脚本 |
 | `POST/GET /api/event` | 无 | 接收上报事件（JSON / form / 图片 beacon） |
-| `GET  /api/sites` | token* | 站点列表（手动注册 ∪ 事件发现，去重） |
-| `GET  /api/stats?site=&days=` | token* | 聚合统计 |
-| `GET  /api/recent?site=&limit=` | token* | 最近事件（实时监控） |
-| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | token* | 访客明细（含可疑 / 询盘计数，可按来源、引荐域、询盘筛选） |
-| `GET  /api/months?site=` | token* | 该站点有数据的月份列表（面板按月切换） |
-| `GET  /api/site` | token* | 手动注册的站点及备注（含每站点部署令牌） |
-| `POST /api/site` | token* | 添加站点 `{"site","label"}`，自动生成独立部署令牌 |
-| `POST /api/site/key` | token* | 重新生成某站点的部署令牌 `{"site"}` |
-| `DELETE /api/site?site=` | token* | 删除站点（含其全部数据） |
+| `GET  /login` | 无 | 登录 / 注册页（自包含单页） |
+| `POST /api/register` | 无 | 注册新用户（IP 限流；成功即登录种会话 Cookie；首个注册用户自动成为管理员） |
+| `POST /api/login` | 无 | 登录（IP 限流；成功种会话 Cookie） |
+| `POST /api/logout` | 无 | 退出登录（清除会话 Cookie） |
+| `GET  /api/me` | 无 | 查询当前登录用户 `{user:{username,role}}`；未登录返回 401 |
+| `GET  /api/sites` | 登录 | 站点列表（手动注册 ∪ 事件发现，去重） |
+| `GET  /api/stats?site=&days=` | 登录 | 聚合统计 |
+| `GET  /api/recent?site=&limit=` | 登录 | 最近事件（实时监控） |
+| `GET  /api/visitors?site=&days=&source=&refdomain=&inquiry=` | 登录 | 访客明细（含可疑 / 询盘计数，可按来源、引荐域、询盘筛选） |
+| `GET  /api/months?site=` | 登录 | 该站点有数据的月份列表（面板按月切换） |
+| `GET  /api/site` | 登录 | 手动注册的站点及备注（含每站点部署令牌） |
+| `GET  /api/admin/settings` | 登录 | 读取保留期 / 时区 / 潜在访客规则 |
+| `GET  /api/admin/blocked` | 登录 | 已屏蔽访客列表 |
+| `POST /api/user/password` | 登录 | 本人修改密码 `{"old","new"}`（需验证原密码） |
+| `POST /api/site` | 管理员 | 添加站点 `{"site","label"}`，自动生成独立部署令牌 |
+| `POST /api/site/key` | 管理员 | 重新生成某站点的部署令牌 `{"site"}` |
+| `POST /api/site/reorder` | 管理员 | 保存站点排序 `{"order":[...]}` |
+| `POST /api/admin/settings` | 管理员 | 保存保留期 / 时区 / 潜在访客规则 / 立即清理 |
+| `POST /api/admin/block` | 管理员 | 软屏蔽访客（保留原始数据，统计排除，可恢复） |
+| `POST /api/admin/unblock` | 管理员 | 解除软屏蔽 |
+| `DELETE /api/site?site=` | 管理员 | 删除站点（含其全部数据） |
+| `GET/POST /api/admin/users` | 管理员 | 用户列表 / 创建用户（可指定角色） |
+| `POST /api/admin/user` | 管理员 | 单用户操作 `{"username","action"}`：role / status / reset_password / delete（最后一名管理员受保护） |
 
-> `token*`：仅当后端以 `--token` 启动时校验；未设置令牌则全部开放（同其他查询接口）。
+> 鉴权基于会话 Cookie（登录后自动携带，HttpOnly）；未登录访问受保护接口返回 401，viewer 调用管理接口返回 403。
 
 ---
 
