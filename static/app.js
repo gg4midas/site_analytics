@@ -1,0 +1,1728 @@
+// site_analytics v1.6.0 app logic (split from index.html)
+var currentUser = null;
+/* 会话失效统一拦截：任意 /api/* 返回 401（登录接口本身除外）时跳转登录页（v1.5.0） */
+(function(){
+  var _origFetch = window.fetch;
+  window.fetch = function(input, init){
+    return _origFetch.apply(this, arguments).then(function(res){
+      try{
+        var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        if(res.status === 401 && url.indexOf('/api/') !== -1
+           && url.indexOf('/api/me') === -1 && url.indexOf('/api/login') === -1
+           && url.indexOf('/api/register') === -1){
+          location.href = '/login';
+        }
+      }catch(e){}
+      return res;
+    });
+  };
+})();
+/* 加载态 + 模态无障碍 (v1.4.2) */
+function setLoading(on){ document.body.classList.toggle('loading', !!on); }
+document.addEventListener('keydown', function(e){
+  var m=document.getElementById('siteModal');
+  var um=document.getElementById('userModal');
+  if(e.key==='Escape' && um && um.style.display!=='none'){ closeUsers(); return; }
+  if(e.key==='Escape' && m && m.style.display!=='none'){ closeSiteManager(); return; }
+  if(e.key!=='Tab' || !m || m.style.display==='none') return;
+  var f=m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if(!f.length) return;
+  var first=f[0], last=f[f.length-1];
+  if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+});
+
+function switchLang(lang){
+  SA_LANG = (lang==='en') ? 'en' : 'zh';
+  localStorage.setItem('sa_lang', SA_LANG);
+  applyI18n();
+  var og = document.querySelector('#selRange optgroup');
+  if(og) og.label = t('月份');
+  // 工具栏时间下拉与实时粒度下拉需在切换语言后重建/重译
+  if(currentSite){ initRangeSelector(); }
+  if(currentTab==='realtime'){ loadRecent(true); }
+  else if(currentSite){ loadData(); }
+  else { loadSites(); }
+  applyThemeAttr();
+  populateVisitorSourceFilter();
+}
+var ECHARTS_OK = (typeof echarts !== 'undefined');
+var currentTheme = (localStorage.getItem('sa_theme') || 'light');
+function applyThemeAttr(){
+  document.documentElement.setAttribute('data-theme', currentTheme);
+  var bt = document.getElementById('btnTheme');
+  if(bt) bt.textContent = currentTheme==='dark' ? t('深色') : t('浅色');
+}
+function toggleTheme(){
+  currentTheme = (currentTheme==='dark') ? 'light' : 'dark';
+  localStorage.setItem('sa_theme', currentTheme);
+  applyThemeAttr();
+  loadData();
+  if(currentTab==='realtime') loadRecent(true);
+}
+var BASE = (function(){
+  var p = location.pathname;
+  if(p === '/' || p === '') return '';
+  if(p.indexOf('/index.html') >= 0) p = p.substring(0, p.indexOf('/index.html'));
+  if(p.charAt(p.length-1) === '/') p = p.substring(0, p.length-1);
+  return p;
+})();
+function apiUrl(p){
+  return BASE + p;
+}
+function safeCall(fn){ try{ return fn(); }catch(e){ console.error('[site_analytics]',e); } }
+
+var currentSite = '';
+var currentRange = 'today';
+var customRangeStart = '';
+var customRangeEnd = '';
+var currentTab = 'overview';
+var charts = {};
+var worldMapLoaded = false;
+var visitorTimer = null;
+var expandedVisitors = {};
+var dashTimer = null;
+var autoRefreshPaused = false;   // 展开访客详情或打开弹窗时暂停自动刷新
+var blockedData = null;          // 已屏蔽访客缓存（站点管理弹窗折叠展示）
+var blockedExpanded = false;      // 已屏蔽访客列表是否展开
+var lastRefreshAt = 0;
+
+function setTip(msg, isWarn){
+  var t = document.getElementById('tip');
+  if(!msg){ t.innerHTML=''; return; }
+  t.innerHTML = '<div class="tip'+(isWarn?' warn':'')+'">'+msg+'</div>';
+}
+
+function fmtNum(n){ n=Number(n)||0; return n.toLocaleString('en-US'); }
+function fmtDuration(sec){
+  sec=Number(sec)||0;
+  if(sec<60) return sec+t(' 秒');
+  var m=Math.floor(sec/60), s=sec%60;
+  if(m<60) return m+t(' 分 ')+(s? s+t(' 秒'):'');
+  var h=Math.floor(m/60); m=m%60;
+  return h+t(' 时 ')+(m? (m+t(' 分')):'');
+}
+function prevTip(v, fmt){
+  if(v===undefined||v===null||v==='') return '';
+  v=Number(v);
+  if(isNaN(v)||v===0) return '';
+  if(fmt) return t('上期')+' '+fmt(v);
+  if(v>=1) return t('上期')+' '+fmtNum(Math.round(v));
+  return t('上期')+' '+v;
+}
+
+function initChart(id){
+  if(!ECHARTS_OK) return null;
+  if(charts[id]) { charts[id].dispose(); }
+  var c = echarts.init(document.getElementById(id), currentTheme==='light' ? undefined : 'dark');
+  charts[id] = c;
+  return c;
+}
+function applyChartTheme(c){
+  if(!c) return;
+  if(currentTheme==='light'){
+    c.setOption({
+      backgroundColor:'transparent',
+      textStyle:{color:'#6b7785'},
+      grid:{left:48,right:18,top:30,bottom:30},
+      tooltip:{backgroundColor:'#ffffff',borderColor:'#d4dce6',textStyle:{color:'#1f2937'}}
+    });
+  } else {
+    c.setOption({
+      backgroundColor:'transparent',
+      textStyle:{color:'#8b98a9'},
+      grid:{left:48,right:18,top:30,bottom:30},
+      tooltip:{backgroundColor:'#1b2230',borderColor:'#2c3543',textStyle:{color:'#e6edf3'}}
+    });
+  }
+}
+
+// ISO 3166-1 alpha-2 -> 中文国家/地区名（内置，统一展示语言）
+var COUNTRY_CN = {"AD": "安道尔", "AE": "阿联酋", "AF": "阿富汗", "AG": "安提瓜和巴布达", "AI": "安圭拉", "AL": "阿尔巴尼亚", "AM": "亚美尼亚", "AO": "安哥拉", "AQ": "南极洲", "AR": "阿根廷", "AS": "美属萨摩亚", "AT": "奥地利", "AU": "澳大利亚", "AW": "阿鲁巴", "AX": "奥兰群岛", "AZ": "阿塞拜疆", "BA": "波斯尼亚和黑塞哥维那", "BB": "巴巴多斯", "BD": "孟加拉国", "BE": "比利时", "BF": "布基纳法索", "BG": "保加利亚", "BH": "巴林", "BI": "布隆迪", "BJ": "贝宁", "BL": "圣巴泰勒米", "BM": "百慕大", "BN": "文莱", "BO": "玻利维亚", "BQ": "荷兰加勒比区", "BR": "巴西", "BS": "巴哈马", "BT": "不丹", "BV": "布韦岛", "BW": "博茨瓦纳", "BY": "白俄罗斯", "BZ": "伯利兹", "CA": "加拿大", "CC": "科科斯群岛", "CD": "刚果（金）", "CF": "中非", "CG": "刚果（布）", "CH": "瑞士", "CI": "科特迪瓦", "CK": "库克群岛", "CL": "智利", "CM": "喀麦隆", "CN": "中国", "CO": "哥伦比亚", "CR": "哥斯达黎加", "CU": "古巴", "CV": "佛得角", "CW": "库拉索", "CX": "圣诞岛", "CY": "塞浦路斯", "CZ": "捷克", "DE": "德国", "DJ": "吉布提", "DK": "丹麦", "DM": "多米尼克", "DO": "多米尼加", "DZ": "阿尔及利亚", "EC": "厄瓜多尔", "EE": "爱沙尼亚", "EG": "埃及", "EH": "西撒哈拉", "ER": "厄立特里亚", "ES": "西班牙", "ET": "埃塞俄比亚", "FI": "芬兰", "FJ": "斐济", "FK": "福克兰群岛", "FM": "密克罗尼西亚", "FO": "法罗群岛", "FR": "法国", "GA": "加蓬", "GB": "英国", "GD": "格林纳达", "GE": "格鲁吉亚", "GF": "法属圭亚那", "GG": "根西", "GH": "加纳", "GI": "直布罗陀", "GL": "格陵兰", "GM": "冈比亚", "GN": "几内亚", "GP": "瓜德罗普", "GQ": "赤道几内亚", "GR": "希腊", "GS": "南乔治亚和南桑威奇群岛", "GT": "危地马拉", "GU": "关岛", "GW": "几内亚比绍", "GY": "圭亚那", "HK": "中国香港", "HM": "赫德岛和麦克唐纳群岛", "HN": "洪都拉斯", "HR": "克罗地亚", "HT": "海地", "HU": "匈牙利", "ID": "印度尼西亚", "IE": "爱尔兰", "IL": "以色列", "IM": "马恩岛", "IN": "印度", "IO": "英属印度洋领地", "IQ": "伊拉克", "IR": "伊朗", "IS": "冰岛", "IT": "意大利", "JE": "泽西", "JM": "牙买加", "JO": "约旦", "JP": "日本", "KE": "肯尼亚", "KG": "吉尔吉斯斯坦", "KH": "柬埔寨", "KI": "基里巴斯", "KM": "科摩罗", "KN": "圣基茨和尼维斯", "KP": "朝鲜", "KR": "韩国", "KW": "科威特", "KY": "开曼群岛", "KZ": "哈萨克斯坦", "LA": "老挝", "LB": "黎巴嫩", "LC": "圣卢西亚", "LI": "列支敦士登", "LK": "斯里兰卡", "LR": "利比里亚", "LS": "莱索托", "LT": "立陶宛", "LU": "卢森堡", "LV": "拉脱维亚", "LY": "利比亚", "MA": "摩洛哥", "MC": "摩纳哥", "MD": "摩尔多瓦", "ME": "黑山", "MF": "法属圣马丁", "MG": "马达加斯加", "MH": "马绍尔群岛", "MK": "北马其顿", "ML": "马里", "MM": "缅甸", "MN": "蒙古", "MO": "中国澳门", "MP": "北马里亚纳群岛", "MQ": "马提尼克", "MR": "毛里塔尼亚", "MS": "蒙特塞拉特", "MT": "马耳他", "MU": "毛里求斯", "MV": "马尔代夫", "MW": "马拉维", "MX": "墨西哥", "MY": "马来西亚", "MZ": "莫桑比克", "NA": "纳米比亚", "NC": "新喀里多尼亚", "NE": "尼日尔", "NF": "诺福克岛", "NG": "尼日利亚", "NI": "尼加拉瓜", "NL": "荷兰", "NO": "挪威", "NP": "尼泊尔", "NR": "瑙鲁", "NU": "纽埃", "NZ": "新西兰", "OM": "阿曼", "PA": "巴拿马", "PE": "秘鲁", "PF": "法属波利尼西亚", "PG": "巴布亚新几内亚", "PH": "菲律宾", "PK": "巴基斯坦", "PL": "波兰", "PM": "圣皮埃尔和密克隆", "PN": "皮特凯恩群岛", "PR": "波多黎各", "PS": "巴勒斯坦", "PT": "葡萄牙", "PW": "帕劳", "PY": "巴拉圭", "QA": "卡塔尔", "RE": "留尼汪", "RO": "罗马尼亚", "RS": "塞尔维亚", "RU": "俄罗斯", "RW": "卢旺达", "SA": "沙特阿拉伯", "SB": "所罗门群岛", "SC": "塞舌尔", "SD": "苏丹", "SE": "瑞典", "SG": "新加坡", "SH": "圣赫勒拿", "SI": "斯洛文尼亚", "SJ": "斯瓦尔巴和扬马延", "SK": "斯洛伐克", "SL": "塞拉利昂", "SM": "圣马力诺", "SN": "塞内加尔", "SO": "索马里", "SR": "苏里南", "SS": "南苏丹", "ST": "圣多美和普林西比", "SV": "萨尔瓦多", "SX": "荷属圣马丁", "SY": "叙利亚", "SZ": "斯威士兰", "TC": "特克斯和凯科斯群岛", "TD": "乍得", "TF": "法属南方领地", "TG": "多哥", "TH": "泰国", "TJ": "塔吉克斯坦", "TK": "托克劳", "TL": "东帝汶", "TM": "土库曼斯坦", "TN": "突尼斯", "TO": "汤加", "TR": "土耳其", "TT": "特立尼达和多巴哥", "TV": "图瓦卢", "TW": "中国台湾", "TZ": "坦桑尼亚", "UA": "乌克兰", "UG": "乌干达", "UM": "美国本土外小岛屿", "US": "美国", "UY": "乌拉圭", "UZ": "乌兹别克斯坦", "VA": "梵蒂冈", "VC": "圣文森特和格林纳丁斯", "VE": "委内瑞拉", "VG": "英属维尔京群岛", "VI": "美属维尔京群岛", "VN": "越南", "VU": "瓦努阿图", "WF": "瓦利斯和富图纳", "WS": "萨摩亚", "YE": "也门", "YT": "马约特", "ZA": "南非", "ZM": "赞比亚", "ZW": "津巴布韦"};
+function cnName(cc, fallback){
+  cc = (cc||'').toUpperCase();
+  if(COUNTRY_CN[cc]) return COUNTRY_CN[cc];
+  return (fallback && fallback!=='') ? fallback : (cc || t('未知'));
+}
+
+// ISO 3166-1 alpha-2 -> 英文国家/地区名（运行时从 static/iso3166.json 加载，用于英文界面）
+var COUNTRY_EN = {};
+(function loadCountryEn(){
+  fetch(BASE + '/static/iso3166.json')
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      for(var i=0;i<list.length;i++){
+        var a2 = (list[i]['alpha-2']||'').toUpperCase();
+        if(a2) COUNTRY_EN[a2] = list[i].name;
+      }
+    })
+    .catch(function(e){ console.error('load iso3166 failed', e); });
+})();
+function countryName(cc, fallback){
+  if(SA_LANG==='en'){
+    cc = (cc||'').toUpperCase();
+    if(COUNTRY_EN[cc]) return COUNTRY_EN[cc];
+    return (fallback && fallback!=='') ? fallback : (cc || t('未知'));
+  }
+  return cnName(cc, fallback);
+}
+
+// 常见城市英文 -> 中文（GeoLite2 城市多为英文，补充展示语言）
+var CITY_CN = {
+  // 中国
+  "Beijing":"北京","Shanghai":"上海","Guangzhou":"广州","Shenzhen":"深圳","Chengdu":"成都","Hangzhou":"杭州",
+  "Wuhan":"武汉","Xi'an":"西安","Nanjing":"南京","Chongqing":"重庆","Tianjin":"天津","Suzhou":"苏州",
+  "Zhengzhou":"郑州","Changsha":"长沙","Qingdao":"青岛","Dalian":"大连","Xiamen":"厦门","Fuzhou":"福州",
+  "Kunming":"昆明","Harbin":"哈尔滨","Changchun":"长春","Shenyang":"沈阳","Hefei":"合肥","Jinan":"济南",
+  "Nanchang":"南昌","Guiyang":"贵阳","Nanning":"南宁","Lanzhou":"兰州","Taiyuan":"太原","Urumqi":"乌鲁木齐",
+  "Hohhot":"呼和浩特","Lhasa":"拉萨","Yinchuan":"银川","Xining":"西宁","Haikou":"海口","Ningbo":"宁波",
+  "Wuxi":"无锡","Foshan":"佛山","Dongguan":"东莞","Zhongshan":"中山","Zhuhai":"珠海","Huizhou":"惠州",
+  "Wenzhou":"温州","Jinhua":"金华","Shaoxing":"绍兴","Jiaxing":"嘉兴","Taizhou":"台州","Nantong":"南通",
+  "Yangzhou":"扬州","Yancheng":"盐城","Xuzhou":"徐州","Huaian":"淮安","Lianyungang":"连云港","Suqian":"宿迁",
+  "Zhenjiang":"镇江","Changzhou":"常州","Taizhou, Jiangsu":"泰州",
+  // 美国
+  "New York":"纽约","New York City":"纽约","Los Angeles":"洛杉矶","Chicago":"芝加哥","San Francisco":"旧金山",
+  "Seattle":"西雅图","Atlanta":"亚特兰大","Dallas":"达拉斯","Houston":"休斯顿","Boston":"波士顿","Washington":"华盛顿",
+  "Washington, D.C.":"华盛顿特区","Philadelphia":"费城","Phoenix":"凤凰城","San Diego":"圣迭戈","San Jose":"圣何塞",
+  "Austin":"奥斯汀","Denver":"丹佛","Miami":"迈阿密","Detroit":"底特律","Minneapolis":"明尼阿波利斯","Tampa":"坦帕",
+  "Orlando":"奥兰多","Portland":"波特兰","Las Vegas":"拉斯维加斯","Nashville":"纳什维尔","St. Louis":"圣路易斯",
+  "Kansas City":"堪萨斯城","Indianapolis":"印第安纳波利斯","Columbus":"哥伦布","Charlotte":"夏洛特","Raleigh":"罗利",
+  "Salt Lake City":"盐湖城","Pittsburgh":"匹兹堡","Cincinnati":"辛辛那提","Cleveland":"克利夫兰","Baltimore":"巴尔的摩",
+  "Milwaukee":"密尔沃基","Sacramento":"萨克拉门托","San Antonio":"圣安东尼奥","Oklahoma City":"俄克拉荷马城",
+  "Louisville":"路易斯维尔","Richmond":"里士满","Memphis":"孟菲斯","Raleigh":"罗利","Honolulu":"檀香山",
+  "Anchorage":"安克雷奇","Birmingham":"伯明翰（美）","Des Moines":"得梅因","Boise":"博伊西","Fargo":"法戈",
+  "Madison":"麦迪逊","Omaha":"奥马哈","Tucson":"图森","Albuquerque":"阿尔伯克基","New Orleans":"新奥尔良",
+  "Colorado Springs":"科罗拉多斯普林斯","Reno":"里诺","Spokane":"斯波坎","Jacksonville":"杰克逊维尔",
+  "Virginia Beach":"弗吉尼亚海滩","Oakland":"奥克兰","Long Beach":"长滩","Arlington":"阿灵顿","Mesa":"梅萨",
+  "Tulsa":"塔尔萨","Wichita":"威奇托","Bakersfield":"贝克斯菲尔德","Staten Island":"斯塔滕岛","Brooklyn":"布鲁克林",
+  "Queens":"皇后区","Bronx":"布朗克斯","Manhattan":"曼哈顿","Flushing":"法拉盛","Alexandria":"亚历山大（美）",
+  "Ashburn":"阿什本","Lanham":"兰厄姆","Lanham-Seabrook":"兰厄姆-西布鲁克","Hagerstown":"黑格斯敦",
+  "Bethpage":"贝斯佩奇","North Kansas City":"北堪萨斯城","Eastern Passage":"东部通道","South Belmar":"南贝尔马",
+  "Mount Royal":"蒙特罗亚尔","Allershausen":"阿勒斯豪森","Greenville":"格林维尔","Tyler":"泰勒",
+  // 英国
+  "London":"伦敦","Manchester":"曼彻斯特","Birmingham":"伯明翰（英）","Glasgow":"格拉斯哥","Liverpool":"利物浦",
+  "Leeds":"利兹","Sheffield":"谢菲尔德","Bristol":"布里斯托","Edinburgh":"爱丁堡","Cardiff":"加的夫","Belfast":"贝尔法斯特",
+  "Newcastle":"纽卡斯尔","Nottingham":"诺丁汉","Leicester":"莱斯特","Coventry":"考文垂","Oxford":"牛津","Cambridge":"剑桥",
+  "Abergavenny":"阿伯加文尼","Caernarfon":"卡纳芬","Castle Vale":"卡斯尔韦尔","Chingford":"钦福德","Dagenham":"达格纳姆",
+  "Oxie":"奥克西","Hope":"霍普","Waterford":"沃特福德（英）","Bishopton":"毕晓普顿",
+  // 欧洲
+  "Paris":"巴黎","Marseille":"马赛","Lyon":"里昂","Berlin":"柏林","Munich":"慕尼黑","Hamburg":"汉堡","Frankfurt":"法兰克福",
+  "Cologne":"科隆","Stuttgart":"斯图加特","Düsseldorf":"杜塞尔多夫","Vienna":"维也纳","Amsterdam":"阿姆斯特丹",
+  "Rotterdam":"鹿特丹","Madrid":"马德里","Barcelona":"巴塞罗那","Valencia":"瓦伦西亚","Rome":"罗马","Milan":"米兰",
+  "Naples":"那不勒斯","Turin":"都灵","Venice":"威尼斯","Brussels":"布鲁塞尔","Zurich":"苏黎世","Geneva":"日内瓦",
+  "Stockholm":"斯德哥尔摩","Copenhagen":"哥本哈根","Oslo":"奥斯陆","Helsinki":"赫尔辛基","Warsaw":"华沙",
+  "Prague":"布拉格","Budapest":"布达佩斯","Bucharest":"布加勒斯特","Sofia":"索菲亚","Lisbon":"里斯本","Dublin":"都柏林（爱）",
+  "Athens":"雅典","Istanbul":"伊斯坦布尔","Ankara":"安卡拉","Izmir":"伊兹密尔","Moscow":"莫斯科","St. Petersburg":"圣彼得堡",
+  "Kiev":"基辅","Kyiv":"基辅","Minsk":"明斯克","Riga":"里加","Tallinn":"塔林","Vilnius":"维尔纽斯","Bratislava":"布拉迪斯拉发",
+  "Ljubljana":"卢布尔雅那","Zagreb":"萨格勒布","Belgrade":"贝尔格莱德","Sarajevo":"萨拉热窝","Skopje":"斯科普里",
+  "Tirana":"地拉那","Reykjavik":"雷克雅未克","Luxembourg":"卢森堡","Monaco":"摩纳哥","Vaduz":"瓦杜兹","Valletta":"瓦莱塔",
+  "Nicosia":"尼科西亚","Tallinn":"塔林","Kosice":"科希策","Ostrava":"俄斯特拉发","Split":"斯普利特","Porto":"波尔图",
+  "Florence":"佛罗伦萨","Bologna":"博洛尼亚","Genoa":"热那亚","Bari":"巴里","Catania":"卡塔尼亚",
+  // 日韩
+  "Tokyo":"东京","Osaka":"大阪","Yokohama":"横滨","Nagoya":"名古屋","Sapporo":"札幌","Fukuoka":"福冈","Kobe":"神户",
+  "Kyoto":"京都","Kawasaki":"川崎","Saitama":"埼玉","Hiroshima":"广岛","Sendai":"仙台","Seoul":"首尔","Busan":"釜山",
+  "Incheon":"仁川","Daegu":"大邱","Daejeon":"大田","Gwangju":"光州","Ulsan":"蔚山","Suwon":"水原","Osan":"乌山",
+  // 东南亚 / 大洋洲
+  "Singapore":"新加坡","Bangkok":"曼谷","Kuala Lumpur":"吉隆坡","Jakarta":"雅加达","Manila":"马尼拉","Ho Chi Minh City":"胡志明市",
+  "Hanoi":"河内","Dubai":"迪拜","Abu Dhabi":"阿布扎比","Tel Aviv":"特拉维夫","Jerusalem":"耶路撒冷","Riyadh":"利雅得",
+  "Jeddah":"吉达","Doha":"多哈","Kuwait City":"科威特城","Cairo":"开罗","Alexandria":"亚历山大（埃）","Sydney":"悉尼",
+  "Melbourne":"墨尔本","Brisbane":"布里斯班","Perth":"珀斯","Adelaide":"阿德莱德","Auckland":"奥克兰","Wellington":"惠灵顿",
+  "Christchurch":"克赖斯特彻奇","Canberra":"堪培拉","Darwin":"达尔文","Hobart":"霍巴特","Gold Coast":"黄金海岸",
+  // 南亚 / 中东 / 非洲 / 拉美
+  "Mumbai":"孟买","New Delhi":"新德里","Delhi":"德里","Bangalore":"班加罗尔","Kolkata":"加尔各答","Chennai":"金奈",
+  "Hyderabad":"海得拉巴","Pune":"浦那","Ahmedabad":"艾哈迈达巴德","Jaipur":"斋浦尔","Navi Mumbai":"新孟买","Neduva":"内杜瓦",
+  "Gharroli":"加尔罗利","Kachrauli":"卡奇劳利","Lakshettipet":"拉克谢蒂佩特","Malout":"马洛特","Karachi":"卡拉奇",
+  "Lahore":"拉合尔","Islamabad":"伊斯兰堡","Dhaka":"达卡","Colombo":"科伦坡","Kathmandu":"加德满都","Tehran":"德黑兰",
+  "Baghdad":"巴格达","Beirut":"贝鲁特","Amman":"安曼","Damascus":"大马士革","Rabat":"拉巴特","Casablanca":"卡萨布兰卡",
+  "Tunis":"突尼斯","Algiers":"阿尔及尔","Cairo":"开罗","Lagos":"拉各斯","Nairobi":"内罗毕","Johannesburg":"约翰内斯堡",
+  "Cape Town":"开普敦","Accra":"阿克拉","Addis Ababa":"亚的斯亚贝巴","Kampala":"坎帕拉","Dar es Salaam":"达累斯萨拉姆",
+  "Mexico City":"墨西哥城","Guadalajara":"瓜达拉哈拉","Monterrey":"蒙特雷","Sao Paulo":"圣保罗","Rio de Janeiro":"里约热内卢",
+  "Brasilia":"巴西利亚","Buenos Aires":"布宜诺斯艾利斯","Lima":"利马","Santiago":"圣地亚哥","Bogota":"波哥大","Caracas":"加拉加斯",
+  "Quito":"基多","San Jose":"圣何塞（哥）","Panama City":"巴拿马城","Havana":"哈瓦那","San Juan":"圣胡安","Ottawa":"渥太华",
+  "Toronto":"多伦多","Vancouver":"温哥华","Montreal":"蒙特利尔","Calgary":"卡尔加里","Edmonton":"埃德蒙顿","Winnipeg":"温尼伯",
+  "Halifax":"哈利法克斯","Victoria":"维多利亚","Quebec City":"魁北克城","Saskatoon":"萨斯卡通","Regina":"里贾纳","St. John's":"圣约翰斯",
+  "Cornwall":"康沃尔（加）","Ft Saskatchewan":"萨斯喀彻温堡","Markham":"马卡姆","Saint-Raymond":"圣雷蒙","Waterford":"沃特福德（加）",
+  "Surrey":"萨里","Vancouver (East Vancouver)":"温哥华（东区）","Calgary (Downtown)":"卡尔加里（市中心）","Halifax (Clayton Park West)":"哈利法克斯（克莱顿公园西区）",
+  // 俄罗斯 / 东欧
+  "Novosibirsk":"新西伯利亚","Yekaterinburg":"叶卡捷琳堡","Nizhny Novgorod":"下诺夫哥罗德","Samara":"萨马拉","Omsk":"鄂木斯克",
+  "Kazan":"喀山","Rostov-on-Don":"顿河畔罗斯托夫","Ufa":"乌法","Volgograd":"伏尔加格勒","Krasnoyarsk":"克拉斯诺亚尔斯克",
+  "Voronezh":"沃罗涅日","Perm":"彼尔姆","Saratov":"萨拉托夫"
+};
+function cityCn(name){
+  if(!name) return name;
+  var n = String(name).trim();
+  if(CITY_CN[n]) return CITY_CN[n];
+  // 尝试去掉括号内行政区保留主名
+  var main = n.replace(/\s*\([^)]*\)$/,'').trim();
+  if(main !== n && CITY_CN[main]) return CITY_CN[main] + ' ' + n.slice(main.length).trim();
+  if(CITY_CN[main]) return CITY_CN[main];
+  return n;
+}
+
+function mapPalette(){
+  // 9 级热力色阶：最浅档也要与「无数据底色」明显区分（浅蓝→蓝→青→绿→黄绿→黄→橙→红→深红）
+  return currentTheme==='light'
+    ? ['#cfe6fa','#a5d3ef','#79bfe6','#4ba7d6','#2c8fbd','#7fc24a','#f4c542','#ef8a3c','#e0533d']
+    : ['#2c5468','#2f6f83','#2f8a8f','#33a37f','#5fb03e','#a8bf3a','#d8b13a','#d97a2b','#d6452e'];
+}
+function mapAreaStyle(){
+  // 无数据国家：用中性灰，避免和最浅热力档（1-2）撞色
+  return currentTheme==='light'
+    ? {areaColor:'#e5e8ee',borderColor:'#cfd6e0',borderWidth:0.5}
+    : {areaColor:'#161b24',borderColor:'#2c3543',borderWidth:0.5};
+}
+// 子域语言前缀（www/de/fr…），用于区分同路径的多语言页面
+function sitePrefix(site){
+  if(!site) return '';
+  var host = String(site).split('.')[0];
+  return host ? '['+host+']' : '';
+}
+// 饼图描边（浅色模式细白描边，深色模式深色描边）
+function pieBorder(){
+  return currentTheme==='light'
+    ? {borderColor:'#ffffff',borderWidth:1}
+    : {borderColor:'#11161f',borderWidth:2};
+}
+function pieLabelColor(){
+  return currentTheme==='light' ? '#4a5563' : '#e6edf3';
+}
+function loadSites(){
+  setTip(t('正在获取站点列表…'));
+  fetch(apiUrl('/api/sites'))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      safeCall(function(){
+        if(res.status && res.sites && res.sites.length){
+          var opts='';
+          for(var i=0;i<res.sites.length;i++) opts+='<option value="'+res.sites[i]+'">'+res.sites[i]+'</option>';
+          document.getElementById('selSite').innerHTML = opts;
+          currentSite = res.sites[0];
+          initRangeSelector();
+          setTip('');
+          loadData();
+        } else {
+          var msg = res.error || res.msg || t('未获取到站点');
+          setTip(t('暂无站点数据。请先在被统计网页中嵌入 tracker.js 埋点脚本，产生真实访问事件后数据会自动刷新。'));
+        }
+      });
+    })
+    .catch(function(e){ setTip(t('获取站点失败：')+e); });
+}
+
+function presetOptions(){
+  var presets = [
+    {label:t('今天'), value:'today'},
+    {label:t('昨天'), value:'yesterday'},
+    {label:t('过去2天'), value:'2days'},
+    {label:t('过去7天'), value:'7days'},
+    {label:t('过去14天'), value:'14days'},
+    {label:t('过去28天'), value:'28days'},
+    {label:t('过去60天'), value:'60days'},
+    {label:t('过去90天'), value:'90days'},
+    {label:t('自定义日期范围'), value:'custom'}
+  ];
+  var opts = '<optgroup label="'+t('预设')+'">';
+  for(var i=0;i<presets.length;i++){
+    var p = presets[i];
+    var sel = p.value === currentRange ? ' selected' : '';
+    opts += '<option value="'+p.value+'"'+sel+'>'+p.label+'</option>';
+  }
+  opts += '</optgroup>';
+  return opts;
+}
+
+function initRangeSelector(){
+  var opts = presetOptions();
+  var sel = document.getElementById('selRange');
+  // 预设始终可点；月份仅展示「有数据的月份」
+  if(currentSite){
+    fetch(apiUrl('/api/months?site='+encodeURIComponent(currentSite)))
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        safeCall(function(){
+          var months = (res.status && res.data) ? res.data : [];
+          var mopts = '';
+          for(var j=0;j<months.length;j++){
+            var ym = months[j];
+            var parts = ym.split('-');
+            var label = t('{y}-{m}', {y:parts[0], m:parseInt(parts[1],10)});
+            var val = 'month:'+ym;
+            mopts += '<option value="'+val+'"'+(val===currentRange?' selected':'')+'>'+label+'</option>';
+          }
+          sel.innerHTML = opts + (mopts ? '<optgroup label="'+t('月份')+'">'+mopts+'</optgroup>' : '');
+          // 若当前选中的月份已无数据（如切换站点后），回退到今天
+          var still = false;
+          for(var k=0;k<sel.options.length;k++){ if(sel.options[k].value===currentRange){ still=true; break; } }
+          if(!still && currentRange.indexOf('custom:')!==0){ currentRange='today'; sel.value='today'; }
+          if(currentRange.indexOf('custom:')===0){
+            sel.value='custom';
+            var parts = currentRange.split(':');
+            if(parts.length===3){
+              customRangeStart=parts[1]; customRangeEnd=parts[2];
+              document.getElementById('dateStart').value=parts[1];
+              document.getElementById('dateEnd').value=parts[2];
+            }
+            showCustomRangePanel(true);
+          }
+        });
+      })
+      .catch(function(e){ console.error(e); sel.innerHTML = opts; });
+  } else {
+    sel.innerHTML = opts;
+    if(currentRange.indexOf('custom:')===0){
+      sel.value='custom';
+      var parts = currentRange.split(':');
+      if(parts.length===3){
+        customRangeStart=parts[1]; customRangeEnd=parts[2];
+        document.getElementById('dateStart').value=parts[1];
+        document.getElementById('dateEnd').value=parts[2];
+      }
+      showCustomRangePanel(true);
+    }
+  }
+}
+
+function onRangeChange(){
+  var sel = document.getElementById('selRange');
+  var val = sel.value;
+  if(val === 'custom'){
+    showCustomRangePanel(true);
+    // 默认填充今天
+    if(!customRangeStart || !customRangeEnd){
+      var t = fmtDate(new Date());
+      customRangeStart = t; customRangeEnd = t;
+      document.getElementById('dateStart').value = t;
+      document.getElementById('dateEnd').value = t;
+    }
+    return;
+  }
+  showCustomRangePanel(false);
+  currentRange = val;
+  loadData();
+}
+
+function onSiteChange(){
+  currentSite = document.getElementById('selSite').value;
+  initRangeSelector();
+  loadData();
+}
+
+function showCustomRangePanel(show){
+  document.getElementById('customRangePanel').style.display = show ? 'inline-flex' : 'none';
+}
+
+function fmtDate(d){
+  var y=d.getFullYear(), m=('0'+(d.getMonth()+1)).slice(-2), day=('0'+d.getDate()).slice(-2);
+  return y+'-'+m+'-'+day;
+}
+
+function parseCustomRange(){
+  var s = document.getElementById('dateStart').value;
+  var e = document.getElementById('dateEnd').value;
+  if(!s || !e) return null;
+  if(s > e){ var tmp=s; s=e; e=tmp; }
+  return {start:s, end:e, value:'custom:'+s+':'+e};
+}
+
+function syncCustomRange(){
+  var r = parseCustomRange();
+  if(r){ customRangeStart = r.start; customRangeEnd = r.end; }
+}
+
+function applyCustomRange(){
+  var r = parseCustomRange();
+  if(!r){ setTip(t('请选择开始和结束日期'), true); return; }
+  customRangeStart = r.start; customRangeEnd = r.end;
+  currentRange = r.value;
+  showCustomRangePanel(true);
+  loadData();
+}
+
+function getRangeParams(){
+  return '&range=' + encodeURIComponent(currentRange);
+}
+
+function loadData(only){
+  if(!currentSite){ return; }
+  setLoading(true);
+  setTip(t('正在加载统计数据…'));
+  fetch(apiUrl('/api/stats?site='+encodeURIComponent(currentSite)+getRangeParams()))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      safeCall(function(){
+        if(!res.status){ setLoading(false); setTip(t('统计失败：')+(res.msg||res.error||t('未知错误')), true); return; }
+        setTip('');
+        setLoading(false);
+        window.__lastStats = res.data;
+        if(only){
+          if(only==='overview') renderOverview(res.data);
+          else if(only==='content') renderContent(res.data);
+          else if(only==='sources') renderSources(res.data);
+          else if(only==='geo') renderGeo(res.data);
+          else if(only==='perf') renderPerf(res.data);
+          return;
+        }
+        renderOverview(res.data);
+        renderVisitorsStatic(res.data);
+        renderContent(res.data);
+        renderSources(res.data);
+        renderGeo(res.data);
+        renderPerf(res.data);
+        if(currentTab==='realtime') loadRecent(true);
+      });
+    })
+    .catch(function(e){ setLoading(false); setTip(t('加载失败：')+e); });
+}
+
+function updateRefreshIndicator(){
+  var el=document.getElementById('autoRefreshIndicator');
+  if(!el) return;
+  if(autoRefreshPaused){
+    el.classList.add('paused');
+    el.textContent=t('已暂停');
+    el.title=t('自动刷新已暂停（关闭访客详情/弹窗后恢复）');
+  } else {
+    el.classList.remove('paused');
+    el.textContent=t('自动刷新');
+    el.title=t('自动刷新中（查看访客详情时会自动暂停）');
+  }
+}
+function setAutoRefreshPaused(paused){
+  autoRefreshPaused = !!paused;
+  updateRefreshIndicator();
+}
+function manualRefresh(){
+  var now = Date.now();
+  if(now - lastRefreshAt < 2000){ return; } // 2 秒内防连点
+  lastRefreshAt = now;
+  var btn=document.getElementById('btnRefresh'); if(btn){ btn.textContent=t('刷新中…'); }
+  function done(){ if(btn){ btn.textContent=t('刷新'); } }
+  if(currentTab==='realtime'){ loadRecent(true); done(); }
+  else if(currentTab==='visitors'){ loadVisitors(); done(); }
+  else { loadData(currentTab); done(); }
+}
+
+function renderOverview(d){
+  var daily=d.daily || [];
+  var isHourly = daily.length && daily[0].label !== undefined;
+  var prev = d.prev || {};
+  // 环比变化：本期 vs 上一个等长周期。higherIsBetter 决定箭头方向（up=绿/好，down=红/差）
+  function chgPct(cur, pv, higherIsBetter){
+    cur=Number(cur)||0; pv=Number(pv)||0;
+    if(pv===0) return {v:'—', dir:'flat'};
+    var dlt=(cur-pv)/pv*100;
+    var dir = dlt>0.5 ? (higherIsBetter?'up':'down') : (dlt<-0.5 ? (higherIsBetter?'down':'up') : 'flat');
+    return {v:(dlt>=0?'+':'')+dlt.toFixed(1)+'%', dir:dir};
+  }
+  var perPV = d.total_uv>0 ? (d.total_pv/d.total_uv) : 0;
+  var prevPpv = prev.uv>0 ? (prev.pv/prev.uv) : 0;
+  var kpis=[
+    {label:t('独立访客'),val:fmtNum(d.total_uv),chg:chgPct(d.total_uv, prev.uv, true), sub:prevTip(prev.uv)},
+    {label:t('浏览量（PV）'),val:fmtNum(d.total_pv),chg:chgPct(d.total_pv, prev.pv, true), sub:prevTip(prev.pv)},
+    {label:t('人均页面数'),val:perPV.toFixed(2),chg:chgPct(perPV, prevPpv, true), sub:prevTip(prevPpv, function(x){return x.toFixed(2);})},
+    {label:t('平均停留'),val:fmtDuration(d.avg_duration),chg:chgPct(d.avg_duration, prev.avg_duration, true), sub:prevTip(prev.avg_duration, fmtDuration)},
+    {label:t('跳出率'),val:d.bounce+'%',chg:chgPct(d.bounce, prev.bounce, false), sub:prevTip(prev.bounce, function(x){return x.toFixed(1)+'%';})},
+    {label:t('当前在线'),val:fmtNum(d.online||0),chg:{v:t('近5分钟'),dir:'flat'}},
+  ];
+  var html='';
+  for(var i=0;i<kpis.length;i++){
+    var k=kpis[i], c=k.chg;
+    var arrow = c.dir==='up'?'▲':(c.dir==='down'?'▼':'■');
+    html+='<div class="kpi">'+
+      '<div class="label">'+k.label+'</div>'+
+      '<div class="val">'+k.val+'</div>'+
+      '<div class="chg '+c.dir+'"><span class="arr">'+arrow+'</span> '+c.v+'</div>'+
+      (k.sub?'<div class="sub">'+k.sub+'</div>':'')+'</div>';
+  }
+  document.getElementById('kpis').innerHTML=html;
+
+  var c1=initChart('chartTrend'); applyChartTheme(c1);
+  if(c1){
+    var xData = daily.map(function(x){ return isHourly ? x.label : x.date.substring(5); });
+    var xLabel = isHourly ? t('时间') : t('日期');
+    c1.setOption({
+      tooltip:{trigger:'axis'},
+      legend:{data:[t('浏览量'),t('访客'),t('浏览量(上期)'),t('访客(上期)')],textStyle:{color:'#8b98a9'},top:0},
+      xAxis:{type:'category',data:xData,name:xLabel,nameTextStyle:{color:'#5b6675'},axisLine:{lineStyle:{color:'#2c3543'}},axisLabel:{color:'#8b98a9',fontSize:11,rotate:isHourly?35:0}},
+      yAxis:{type:'value',splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
+      series:[
+        {name:t('浏览量'),type:'line',smooth:true,areaStyle:{opacity:.15},data:daily.map(function(x){return x.pv;}),itemStyle:{color:'#1f9cf0'}},
+        {name:t('访客'),type:'line',smooth:true,areaStyle:{opacity:.12},data:daily.map(function(x){return x.uv;}),itemStyle:{color:'#16c2c2'}},
+        {name:t('浏览量(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'#1f9cf0'},itemStyle:{color:'#1f9cf0'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.pv;})},
+        {name:t('访客(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'#16c2c2'},itemStyle:{color:'#16c2c2'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.uv;})}
+      ]
+    });
+  }
+
+  var c2=initChart('chartDevice'); applyChartTheme(c2);
+  if(c2){
+    var dd=d.device.map(function(x){return {name:t(x.name),value:x.value};});
+    c2.setOption({
+      tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',radius:['42%','70%'],data:dd,label:{color:pieLabelColor(),fontSize:11},
+        itemStyle:pieBorder()}]
+    });
+  }
+
+  var c3=initChart('chartSub'); applyChartTheme(c3);
+  if(c3){
+    var subs = d.subdomains || [];
+    if(!subs.length){
+      c3.clear();
+      c3.setOption({title:{text:t('暂无子域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+    } else {
+      c3.setOption({
+        tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+        series:[{type:'pie',radius:['42%','70%'],data:subs.map(function(x){return {name:t(x.name),value:x.value};}),
+          label:{color:pieLabelColor(),fontSize:11,formatter:'{b}\n{c}'},
+          itemStyle:pieBorder()}]
+      });
+    }
+  }
+
+  // 新访客 vs 回访客
+  var cNR=initChart('chartNewReturn'); applyChartTheme(cNR);
+  if(cNR){
+    var nr=d.new_returning||{new:0,returning:0};
+    var nrData=[{name:t('新访客'),value:nr.new||0},{name:t('回访客'),value:nr.returning||0}];
+    if((nr.new||0)+(nr.returning||0)===0){ cNR.clear(); cNR.setOption({title:{text:t('暂无数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}); }
+    else cNR.setOption({tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',radius:['45%','72%'],data:nrData,label:{color:pieLabelColor(),fontSize:12,formatter:'{b}\n{d}%'},itemStyle:pieBorder()}]});
+  }
+  // 访问深度分布
+  var cD=initChart('chartDepth'); applyChartTheme(cD);
+  if(cD){
+    var dp=d.depth_distribution||[];
+    var order=['1','2-3','4-6','7+'];
+    var dv=order.map(function(b){ var f=dp.filter(function(x){return x.bucket===b;})[0]; return f?f.value:0; });
+    cD.setOption({tooltip:{trigger:'axis'},grid:{left:50,right:20,top:20,bottom:30},
+      xAxis:{type:'category',data:order,axisLabel:{color:'#8b98a9'}},
+      yAxis:{type:'value',axisLabel:{color:'#8b98a9'},splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
+      series:[{type:'bar',data:dv,itemStyle:{color:'#1f9cf0'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]});
+  }
+  renderRankTable('tblLanding', (d.landing_pages||[]).slice(0,10), t('落地页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
+  renderRankTable('tblExit', (d.exit_pages||[]).slice(0,10), t('退出页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
+  renderDwellTable(d.page_dwell||[]);
+  renderAnomaly(d);
+
+  renderPagesTable(d.pages.slice(0, 10), 'tblPages');
+}
+
+function renderRankTable(id, rows, label, fmt, withBar, nameRenderer, valueLabel){
+  var el=document.getElementById(id);
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
+  var max=rows[0].value;
+  var vlabel = (typeof valueLabel === 'string' && valueLabel) ? valueLabel : t('次数');
+  var h='<thead><tr><th class="rank">#</th><th>'+label+'</th><th class="right">'+vlabel+'</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var nameHtml = (nameRenderer && typeof nameRenderer==='function') ? nameRenderer(r) : escapeHtml(r.name);
+    var bw = withBar ? '<div class="bar" style="width:'+Math.max(4,Math.round(r.value/max*90))+'px"></div> ' : '';
+    h+='<tr><td class="rank">'+(i+1)+'</td><td class="cell-path">'+nameHtml+'</td>'+
+       '<td class="right">'+bw+fmtNum(r.value)+'</td></tr>';
+  }
+  el.innerHTML=h+'</tbody>';
+}
+
+function renderDwellTable(rows){
+  var el=document.getElementById('tblDwell');
+  if(!el) return;
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('平均停留')+'</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    h+='<tr><td class="col-idx">'+(i+1)+'</td><td class="cell-path">'+pageLink(r.site || currentSite,r.path)+'</td>'+
+       '<td class="right mono">'+fmtDuration(r.avg)+'</td></tr>';
+  }
+  el.innerHTML=h+'</tbody>';
+}
+
+function renderPerfSummary(d){
+  var el=document.getElementById('perfSummary'); if(!el) return;
+  var o=d||{};
+  if(!o.perf_count || o.perf_count <= 0){
+    el.innerHTML='<div class="empty">'+t('当前周期暂无性能采样数据（需新访客浏览器上报页面性能指标）')+'</div>'; return;
+  }
+  function cell(label,val,unit,good,poor){
+    var rating = val<=good ? 'good' : (val<=poor ? 'mid' : 'poor');
+    var color = rating==='good' ? 'var(--up)' : (rating==='mid' ? '#d29922' : 'var(--down)');
+    var pctw = poor>0 ? Math.min(100, (val/poor)*100) : 0;
+    return '<div class="perf-item"><div class="perf-label">'+label+'</div>'+
+      '<div class="perf-val" style="color:'+color+'">'+val.toFixed(2)+'<span class="perf-unit">'+unit+'</span></div>'+
+      '<div class="perf-bar"><span style="width:'+pctw+'%;background:'+color+'"></span></div></div>';
+  }
+  el.innerHTML =
+    cell('FCP', o.fcp||0, 's', 1.8, 3) +
+    cell('LCP', o.lcp||0, 's', 2.5, 4) +
+    cell('TTFB', o.ttfb||0, 's', 0.8, 1.8) +
+    cell('CLS', o.cls||0, '', 0.1, 0.25) +
+    cell(t('Speed Index (估算)'), o.speed_index||0, 's', 3.4, 5.8);
+}
+
+function renderPerfTable(rows){
+  var el=document.getElementById('tblPerf'); if(!el) return;
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty">'+t('暂无数据')+'</td></tr>'; return; }
+  var h='<thead><tr><th>'+t('页面 URL')+'</th><th class="right">'+t('采样')+'</th><th class="right">FCP</th><th class="right">LCP</th><th class="right">TTFB</th><th class="right">CLS</th><th class="right">'+t('Speed Index (估算)')+'</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var sp = (r.site && r.site !== currentSite) ? r.site : '';
+    h+='<tr><td class="cell-path">'+(sp?'<span class="site-tag" title="'+escapeHtml(r.site)+'">'+escapeHtml(sp)+'</span> ':'')+pageLink(r.site || currentSite, r.path)+'</td>'+
+       '<td class="right mono">'+fmtNum(r.views)+'</td>'+
+       '<td class="right mono">'+r.fcp.toFixed(2)+'</td>'+
+       '<td class="right mono">'+r.lcp.toFixed(2)+'</td>'+
+       '<td class="right mono">'+r.ttfb.toFixed(2)+'</td>'+
+       '<td class="right mono">'+r.cls.toFixed(3)+'</td>'+
+       '<td class="right mono">'+r.speed_index.toFixed(2)+'</td></tr>';
+  }
+  el.innerHTML=h+'</tbody>';
+}
+
+var currentPerfDevice = 'all';
+function renderPerf(d){
+  window._perfData = d;
+  var seg = document.getElementById('perfDevSeg');
+  if(seg){
+    var bd = d.perf_by_device || {};
+    var devs = Object.keys(bd);
+    var order = ['桌面','手机','平板'];
+    devs.sort(function(a,b){ var ia=order.indexOf(a), ib=order.indexOf(b); if(ia<0)ia=99; if(ib<0)ib=99; return ia-ib; });
+    var html = '<button class="seg-btn'+(currentPerfDevice==='all'?' active':'')+'" onclick="clickPerfDevice(\'all\', this)">'+t('全部')+'</button>';
+    for(var i=0;i<devs.length;i++){
+      var dv=devs[i]; var cnt=(bd[dv]&&bd[dv].count)||0;
+      html += '<button class="seg-btn'+(currentPerfDevice===dv?' active':'')+'" onclick="clickPerfDevice(\''+dv+'\', this)">'+t(dv)+' <span class="seg-cnt">'+fmtNum(cnt)+'</span></button>';
+    }
+    seg.innerHTML = html;
+  }
+  _renderPerfView();
+}
+function clickPerfDevice(dev, btn){
+  currentPerfDevice = dev;
+  var seg = document.getElementById('perfDevSeg');
+  if(seg){ var bs=seg.querySelectorAll('.seg-btn'); for(var i=0;i<bs.length;i++) bs[i].classList.remove('active'); }
+  if(btn) btn.classList.add('active');
+  _renderPerfView();
+}
+function _renderPerfView(){
+  var d = window._perfData; if(!d) return;
+  var summary, pages;
+  if(currentPerfDevice==='all'){ summary=d.perf_overall||{}; pages=d.perf_pages||[]; }
+  else { var blk=d.perf_by_device&&d.perf_by_device[currentPerfDevice]; summary=blk?blk.summary:{}; pages=blk?blk.pages:[]; }
+  summary.perf_count = d.perf_count || 0;
+  renderPerfSummary(summary);
+  renderPerfTable(pages);
+}
+
+function renderAnomaly(d){
+  var bar=document.getElementById('anomalyBar'); if(!bar) return;
+  var a=d.anomaly||{level:'ok'};
+  if(a.level!=='warn'){ bar.style.display='none'; return; }
+  var txt = a.type==='spike'
+    ? t('流量异常：当前区间浏览量')+fmtNum(a.cur_pv)+t(' 较上一等长区间')+fmtNum(a.prev_pv)+t(' 增长约')+Math.round((a.ratio-1)*100)+t('%，可能为推广活动或异常爬虫，建议核查。')
+    : t('流量异常：当前区间浏览量')+fmtNum(a.cur_pv)+t(' 较上一等长区间')+fmtNum(a.prev_pv)+t(' 下降约')+Math.round((1-a.ratio)*100)+t('%，请关注站点可用性与收录情况。');
+  bar.className='alert '+(a.type==='spike'?'alert-up':'alert-down');
+  bar.innerHTML='<span class="alert-ico">!</span> '+txt;
+  bar.style.display='flex';
+}
+
+function renderVisitorsStatic(d){
+  loadVisitors();
+}
+
+function loadVisitors(){
+  if(!currentSite) return;
+  fetch(apiUrl('/api/visitors?site='+encodeURIComponent(currentSite)+getRangeParams()+getSourceParams()+getInquiryParams()))
+    .then(function(r){return r.json();})
+    .then(function(res){
+      safeCall(function(){
+        if(!res.status) return;
+        if(typeof res.inquiry_count === 'number'){
+          var ic=document.getElementById('inquiryCount');
+          if(ic) ic.textContent = fmtNum(res.inquiry_count);
+        }
+        var sc=document.getElementById('suspectChip');
+        if(sc){
+          if(res.suspect_count>0){
+            sc.style.display='inline-flex';
+            var dc = res.suspect_dc_count || 0;
+            var hp = res.suspect_highpv_count || 0;
+            var extra = '';
+            if(dc>0 && hp>0) extra = '（'+dc+t(' 个疑似数据采集')+' / '+hp+t(' 个浏览量畸高')+'）';
+            else if(dc>0) extra = '（'+dc+t(' 个疑似数据采集')+'）';
+            else if(hp>0) extra = '（'+hp+t(' 个浏览量畸高')+'）';
+            sc.textContent='⚠ '+res.suspect_count+t(' 个疑似异常')+extra;
+          } else { sc.style.display='none'; }
+        }
+        var vc = document.getElementById('visitorCount');
+        if(vc){
+          var tv = (typeof res.total_visitors === 'number') ? res.total_visitors : (res.data ? res.data.length : 0);
+          vc.textContent = fmtNum(tv) + ' ' + t('位');
+        }
+        window.__lastVisitors = res.data||[];
+        renderVisitors(res.data||[]);
+      });
+    }).catch(function(e){ console.error(e); });
+}
+
+var allVisitorRows = [];
+var visitorRendered = 0;
+var VISITOR_CHUNK = 80;
+
+function renderVisitors(rows){
+  allVisitorRows = rows || [];
+  visitorRendered = 0;
+  var el = document.getElementById('visitorList');
+  if(!allVisitorRows.length){
+    el.innerHTML = '<div class="empty">'+t('暂无访客数据')+'</div>';
+    return;
+  }
+  // 表头 + 空 tbody + 「加载更多」；正文分块渲染，避免 500 行一次性渲染卡顿（前端优化）
+  el.innerHTML = '<table class="visitor-table"><thead><tr>'+
+    '<th style="width:30px"></th>'+
+    '<th>'+t('访客')+'</th>'+
+    '<th>'+t('来路')+'</th>'+
+    '<th>'+t('设备 / 浏览器')+'</th>'+
+    '<th>'+t('运营商')+'</th>'+
+    '<th>'+t('地区')+'</th>'+
+    '<th class="right">'+t('页面')+'</th>'+
+    '<th class="right">'+t('停留')+'</th>'+
+    '<th class="right">'+t('最近活跃')+'</th>'+
+    '</tr></thead><tbody id="visitorTbody"></tbody></table>'+
+    '<div id="visitorMore" class="more-row" style="display:none"><button class="btn ghost" onclick="loadMoreVisitors()">'+t('加载更多')+'</button></div>';
+  renderVisitorChunk();
+}
+
+function buildVisitorRow(v, i){
+  var hasActions = v.pages_list && v.pages_list.length >= 1;
+  var expanded = hasActions && !!expandedVisitors[v.visitor];
+  var expandIcon = hasActions ? '<span class="expand-icon" id="exp-'+i+'">'+(expanded?'▼':'▶')+'</span>' : '<span style="color:var(--faint);font-size:10px">—</span>';
+  var region = (v.cc || v.country) ? escapeHtml(countryName(v.cc, v.country)) : '<span style="color:var(--faint)">—</span>';
+  var isp = v.isp ? '<span class="isp-tag" title="'+escapeHtml(v.isp)+'">'+escapeHtml(v.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
+  var ref = v.referer ? '<span class="ref" title="'+escapeHtml(v.referer)+'">'+escapeHtml(hostOf(v.referer))+'</span>' : '<span style="color:var(--faint)">'+t('直接访问')+'</span>';
+  var vid = (v.visitor||'').replace(/'/g,"\\'");
+  var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+vid+'\')"' : '';
+  var suspect = !!v.suspicious;
+  var suspectBadge = '';
+  if(suspect){
+    var st = v.suspect_type || '';
+    if(st === 'datacenter'){
+      suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||t('数据中心/云主机网络，疑似数据采集/抓取'))+'">'+t('疑似数据采集')+'</span>';
+    } else if(st === 'both'){
+      suspectBadge = '<span class="suspect-badge dc" title="'+escapeHtml(v.suspect_reason||t('数据中心/云主机网络且浏览量畸高，疑似数据采集/抓取'))+'">'+t('疑似爬虫/抓取')+'</span>';
+    } else {
+      suspectBadge = '<span class="suspect-badge" title="'+escapeHtml(v.suspect_reason||t('单访客浏览量畸高，疑似爬虫'))+'">'+t('浏览量畸高')+'</span>';
+    }
+  }
+  var h = '<tr class="visitor-row'+(suspect?' is-suspect':'')+'" '+click+'>'+
+    '<td>'+expandIcon+'</td>'+
+    '<td class="mono">'+shortId(v.visitor)+suspectBadge+'</td>'+
+    '<td>'+ref+'</td>'+
+    '<td><span class="tag '+devClass(v.device)+'">'+escapeHtml(t(v.device))+'</span> '+escapeHtml(t(v.browser))+'</td>'+
+    '<td>'+isp+'</td>'+
+    '<td>'+region+'</td>'+
+    '<td class="right">'+fmtNum(v.pv)+'</td>'+
+    '<td class="right mono">'+((typeof v.duration_total==='number')?escapeHtml(fmtDuration(v.duration_total)):escapeHtml(v.duration_text||''))+'</td>'+
+    '<td class="right mono" style="color:var(--muted)">'+v.last_time+'</td>'+
+    '</tr>';
+  if(hasActions){
+    h += '<tr class="visitor-actions" id="actions-'+i+'" style="'+(expanded?'':'display:none')+'"><td colspan="9">'+
+      '<div class="actions-wrap"><div class="actions-head">'+t('访问页面（{n} 个不同页面 · 共 {m} 次动作）',{n:v.pages_count,m:v.pv})+'</div>'+
+      '<table><thead><tr><th>'+t('路径')+'</th><th class="right">'+t('访问次数')+'</th><th class="right">'+t('最后访问')+'</th></tr></thead><tbody>';
+    for(var j=0;j<v.pages_list.length;j++){
+      var a = v.pages_list[j];
+      h += '<tr><td class="cell-path mono">'+pageLink(v.site, a.path)+'</td>'+
+        '<td class="right mono">'+fmtNum(a.count)+'</td>'+
+        '<td class="right mono" style="color:var(--muted);white-space:nowrap">'+a.last_time+'</td></tr>';
+    }
+    h += '</tbody></table></div></td></tr>';
+  }
+  return h;
+}
+
+function renderVisitorChunk(){
+  var tbody = document.getElementById('visitorTbody');
+  if(!tbody) return;
+  var end = Math.min(visitorRendered + VISITOR_CHUNK, allVisitorRows.length);
+  var h = '';
+  for(var i=visitorRendered; i<end; i++){
+    h += buildVisitorRow(allVisitorRows[i], i);
+  }
+  tbody.insertAdjacentHTML('beforeend', h);
+  visitorRendered = end;
+  var more = document.getElementById('visitorMore');
+  if(more) more.style.display = (visitorRendered < allVisitorRows.length) ? 'block' : 'none';
+}
+
+function loadMoreVisitors(){ renderVisitorChunk(); }
+
+function toggleVisitor(idx, vid){
+  var row = document.getElementById('actions-'+idx);
+  var icon = document.getElementById('exp-'+idx);
+  if(!row) return;
+  if(expandedVisitors[vid]){ delete expandedVisitors[vid]; }
+  else { expandedVisitors[vid] = true; }
+  if(expandedVisitors[vid]){
+    row.style.display = 'table-row';
+    if(icon) icon.textContent = '▼';
+  } else {
+    row.style.display = 'none';
+    if(icon) icon.textContent = '▶';
+  }
+  checkAutoRefreshPause();
+}
+
+function unblockVisitor(vid){
+  if(!vid) return;
+  fetch(apiUrl('/api/admin/unblock'), {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({visitor:vid})})
+    .then(function(r){return r.json();})
+    .then(function(res){
+      if(res.status){ loadBlocked(); }
+      else { alert(t('恢复失败：')+(res.error||t('未知错误'))); }
+    }).catch(function(e){ alert(t('请求失败，请重试')); });
+}
+
+function loadBlocked(){
+  var cntEl=document.getElementById('blockedCount');
+  fetch(apiUrl('/api/admin/blocked'+(currentSite?('?site='+encodeURIComponent(currentSite)):'')))
+    .then(function(r){return r.json();})
+    .then(function(res){
+      safeCall(function(){
+        if(!res.status){ if(cntEl) cntEl.textContent='0'; return; }
+        blockedData = res.data||[];
+        if(cntEl) cntEl.textContent = String(blockedData.length);
+        if(blockedExpanded) renderBlocked();
+      });
+    }).catch(function(e){ if(cntEl) cntEl.textContent='0'; });
+}
+
+function renderBlocked(){
+  var el=document.getElementById('blockedList');
+  if(!el) return;
+  var rows = blockedData||[];
+  if(!rows.length){ el.innerHTML='<div class="retention-note">'+t('暂无被屏蔽的访客。')+'</div>'; return; }
+  var h='';
+  for(var i=0;i<rows.length;i++){
+    var b=rows[i];
+    var vidEsc=(b.visitor||'').replace(/'/g,"\\'");
+    var when=b.created?fmtTs(b.created):'';
+    h+='<div class="blocked-item"><div class="bi-main">'+
+      '<div class="mono">'+shortId(b.visitor)+(b.site?(' · '+escapeHtml(b.site)):'')+'</div>'+
+      '<div class="bi-isp">'+(b.isp?escapeHtml(b.isp)+' ':'')+(b.asn?'<span class="seg-tag">AS'+escapeHtml(String(b.asn))+'</span> · ':'· ')+(b.reason?escapeHtml(b.reason):t('手动屏蔽'))+(when?(' · '+when):'')+'</div>'+
+      '</div><button class="mini adm" onclick="unblockVisitor(\''+vidEsc+'\')">'+t('恢复')+'</button></div>';
+  }
+  el.innerHTML=h;
+}
+
+function toggleBlocked(){
+  blockedExpanded = !blockedExpanded;
+  var el=document.getElementById('blockedList');
+  var arrow=document.getElementById('blockedArrow');
+  var label=document.getElementById('blockedLabel');
+  if(!el||!arrow||!label) return;
+  if(blockedExpanded){
+    el.style.display='block';
+    arrow.textContent='▾'; label.textContent=t('收起已屏蔽访客');
+    if(blockedData===null){ loadBlocked(); } else { renderBlocked(); }
+  } else {
+    el.style.display='none';
+    arrow.textContent='▸'; label.textContent=t('展开已屏蔽访客');
+  }
+}
+
+function fmtTs(ms){
+  try{ var d=new Date(ms); var p=function(n){return (n<10?'0':'')+n;};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+  catch(e){ return ''; }
+}
+
+function devClass(dev){ return dev==='手机'?'dev-mobile':(dev==='平板'?'dev-tablet':'dev-desktop'); }
+
+function loadRecent(isLive){
+  if(!currentSite) return;
+  var windowMin = document.getElementById('selWindow').value || 10;
+  document.getElementById('liveWindowLabel').textContent = t('近 {n} 分钟', windowMin);
+  fetch(apiUrl('/api/recent?site='+encodeURIComponent(currentSite)+'&window='+windowMin+'&limit=500'))
+    .then(function(r){return r.json();})
+    .then(function(res){
+      safeCall(function(){
+        if(!res.status) return;
+        var rows=res.data||[];
+        var html='<thead><tr><th>'+t('时间')+'</th><th>'+t('访客')+'</th><th>'+t('站点')+'</th><th>'+t('路径')+'</th><th>'+t('来路')+'</th><th>'+t('设备')+'</th><th>'+t('运营商')+'</th><th>'+t('地区')+'</th><th class="right">'+t('PV / 页')+'</th></tr></thead><tbody>';
+        if(!rows.length){ html+='<tr><td class="empty" colspan="9">'+t('该窗口内暂无访问记录')+'</td></tr>'; }
+        for(var i=0;i<rows.length;i++){
+          var r=rows[i];
+          var ref = r.referer ? '<span class="ref" title="'+escapeHtml(r.referer)+'">'+escapeHtml(hostOf(r.referer))+'</span>' : '<span class="ref" style="color:var(--faint)">'+t('直接访问')+'</span>';
+          var region = (r.cc || r.country) ? escapeHtml(countryName(r.cc, r.country)) : '<span style="color:var(--faint)">—</span>';
+          var risp = r.isp ? '<span class="isp-tag" title="'+escapeHtml(r.isp)+'">'+escapeHtml(r.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
+          var rvid=(r.visitor||'').replace(/'/g,"\\'");
+          var rsite=(r.site||'').replace(/'/g,"\\'");
+          var rSuspect = '';
+          if(r.suspicious){
+            var rst = r.suspect_type || '';
+            if(rst === 'datacenter' || rst === 'both'){
+              rSuspect = '<span class="suspect-badge dc" title="'+escapeHtml(r.suspect_reason||t('数据中心/云主机网络，疑似数据采集/抓取'))+'">'+t('疑似数据采集')+'</span>';
+            } else {
+              rSuspect = '<span class="suspect-badge" title="'+escapeHtml(r.suspect_reason||t('单访客浏览量畸高，疑似爬虫'))+'">'+t('浏览量畸高')+'</span>';
+            }
+          }
+          html+='<tr class="visitor-row'+(r.suspicious?' is-suspect':'')+'"><td class="mono" style="color:var(--muted)">'+r.last_time+'</td>'+
+            '<td class="mono">'+shortId(r.visitor)+rSuspect+'</td>'+
+            '<td><span class="site-tag" title="'+escapeHtml(r.site||'')+'">'+escapeHtml(r.site||'—')+'</span></td>'+
+            '<td class="cell-path mono">'+pageLink(r.site, r.current_path)+'</td>'+
+            '<td>'+ref+'</td>'+
+            '<td><span class="tag '+devClass(r.device)+'">'+escapeHtml(r.device)+'</span></td>'+
+            '<td>'+risp+'</td>'+
+            '<td>'+region+'</td>'+
+            '<td class="right mono">'+fmtNum(r.pv)+' / '+fmtNum(r.pages_count)+'</td></tr>';
+        }
+        html+='</tbody>';
+        if(isLive){ document.getElementById('tblLive').innerHTML=html; updateLiveKpis(rows, windowMin, res.online||0); }
+      });
+    }).catch(function(e){ console.error(e); });
+}
+
+function updateLiveKpis(rows, windowMin, online){
+  var pv=0; var ips={};
+  for(var i=0;i<rows.length;i++){ pv += (rows[i].pv||0); ips[rows[i].visitor]=1; }
+  var uv=Object.keys(ips).length;
+  online = (typeof online==='number') ? online : 0;
+  var html=''+
+    '<div class="kpi"><div class="label">'+t('近 {n} 分钟 PV', windowMin)+'</div><div class="val">'+pv+'</div><div class="chg flat">'+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('独立访客')+'</div><div class="val">'+uv+'</div><div class="chg flat">'+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('当前在线')+'</div><div class="val">'+online+'</div><div class="chg flat"><span class="live-dot"></span> '+t('实时')+'</div></div>'+
+    '<div class="kpi"><div class="label">'+t('状态')+'</div><div class="val" style="color:var(--up);font-size:20px">LIVE</div><div class="chg flat">'+t('监听中')+'</div></div>';
+  document.getElementById('liveKpis').innerHTML=html;
+}
+
+function renderContent(d){
+  var c2=initChart('chartUa'); applyChartTheme(c2);
+  if(c2){
+    c2.setOption({
+      tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',roseType:'radius',radius:['30%','70%'],data:d.browser.map(function(x){return {name:t(x.name),value:x.value};}),
+        label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
+    });
+  }
+  var c3=initChart('chartDevice2'); applyChartTheme(c3);
+  if(c3){
+    c3.setOption({
+      tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',radius:['42%','70%'],data:d.device.map(function(x){return {name:t(x.name),value:x.value};}),
+        label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
+    });
+  }
+  renderPagesTable(d.pages);
+}
+
+function renderPagesTable(rows, targetId){
+  var el=document.getElementById(targetId || 'tblPages3');
+  if(!el) return;
+  if(!rows || !rows.length){ el.innerHTML='<tr><td class="empty" colspan="3">'+t('暂无数据')+'</td></tr>'; return; }
+  var h='<thead><tr><th class="col-idx">#</th><th>'+t('页面 URL')+'</th><th class="right">'+t('次数')+'</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var sp=sitePrefix(r.site||'');
+    h+='<tr>'+
+      '<td class="col-idx">'+ (i+1) +'</td>'+
+      '<td class="cell-path">'+(sp?'<span class="site-tag" title="'+escapeHtml(r.site||'')+'">'+escapeHtml(sp)+'</span> ':'')+pageLink(r.site || currentSite, r.name)+'</td>'+
+      '<td class="right mono">'+ fmtNum(r.value) +'</td>'+
+      '</tr>';
+  }
+  el.innerHTML=h+'</tbody>';
+}
+
+function renderSources(d){
+  var c1=initChart('chartRef'); applyChartTheme(c1);
+  var cats = d.sources || [];
+  if(c1){
+    c1.setOption({
+      tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',radius:['40%','70%'],data:cats.map(function(x){return {name:t(x.label),value:x.value};}),
+        label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
+    });
+  }
+  renderRankTable('tblRefCat', cats.map(function(x){return {key:x.category,name:t(x.label),value:x.value};}),
+    t('来源类型'), function(v){return v;}, true, function(r){return filterAnchor('source', r.key, r.name);}, t('独立访客'));
+  renderRankTable('tblRef', d.referrer, t('来源域名'), function(v){return v;}, true,
+    function(r){return filterAnchor('refdomain', r.name, r.name);}, t('独立访客'));
+}
+
+function loadWorldMap(callback){
+  if(worldMapLoaded) { if(callback) callback(); return; }
+  fetch(BASE + '/static/world_map.json')
+    .then(function(r){ return r.json(); })
+    .then(function(geoJson){
+      safeCall(function(){
+        echarts.registerMap('world', geoJson);
+        worldMapLoaded = true;
+        if(callback) callback();
+      });
+    })
+    .catch(function(e){
+      console.error('load world map failed', e);
+      worldMapLoaded = false;
+    });
+}
+
+function renderGeo(d){
+  var countries = d.countries || d.geo_tree || [];
+  var hasData = countries && countries.length;
+
+  // 世界地图
+  loadWorldMap(function(){
+    var c1 = initChart('chartMap'); applyChartTheme(c1);
+    if(!c1) return;
+    if(!d.maxminddb_available){
+      c1.clear();
+      c1.setOption({title:{text:t('未安装 maxminddb 库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：pip install maxminddb 后可启用访客地域与运营商(ISP)识别。');
+      return;
+    }
+    if(!d.geo_enabled){
+      c1.clear();
+      c1.setOption({title:{text:t('未配置 GeoIP 数据库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。');
+      return;
+    }
+    if(!hasData){
+      c1.clear();
+      c1.setOption({title:{text:t('所选周期内暂无地域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      document.getElementById('geoMapNote').textContent=t('提示：GeoIP 已启用，只有加载 GeoIP 之后新产生的访问才会显示地域。');
+      return;
+    }
+    var mapData = [];
+    for(var i=0;i<countries.length;i++){
+      var c = countries[i];
+      if(c.code){
+        mapData.push({name:c.code.toUpperCase(), value:c.value, cnName: countryName(c.code, c.name)});
+      }
+    }
+    var maxVal = mapData.length ? Math.max.apply(null, mapData.map(function(x){return x.value;})) : 1;
+    c1.setOption({
+      tooltip:{
+        trigger:'item',
+        formatter:function(p){
+          var nm = (p.data && p.data.cnName) ? p.data.cnName : (p.name||'—');
+          return nm + '<br>'+t('独立访客: ')+fmtNum(p.value||0);
+        }
+      },
+      visualMap:{
+        type:'piecewise',
+        pieces:[
+          {min:500,          label:'500+',    color: mapPalette()[8]},
+          {min:201, max:500, label:'201-500', color: mapPalette()[7]},
+          {min:101, max:200, label:'101-200', color: mapPalette()[6]},
+          {min:51,  max:100, label:'51-100',  color: mapPalette()[5]},
+          {min:21,  max:50,  label:'21-50',   color: mapPalette()[4]},
+          {min:11,  max:20,  label:'11-20',   color: mapPalette()[3]},
+          {min:6,   max:10,  label:'6-10',    color: mapPalette()[2]},
+          {min:3,   max:5,   label:'3-5',     color: mapPalette()[1]},
+          {min:1,   max:2,   label:'1-2',     color: mapPalette()[0]}
+        ],
+        text:[t('高'),t('低')],
+        showLabel:true,
+        realtime:false,
+        textStyle:{color: currentTheme==='light' ? '#5b6675' : '#8b98a9'},
+        left:18,
+        bottom:18
+      },
+      series:[{
+        name:t('独立访客'),
+        type:'map',
+        map:'world',
+        roam:true,
+        emphasis:{label:{show:false},itemStyle:{areaColor:'#d29922'}},
+        itemStyle: mapAreaStyle(),
+        data:mapData
+      }]
+    });
+    document.getElementById('geoMapNote').textContent=t('颜色越深表示该国家/地区的独立访客越多。仅展示所选周期内有访问的国家。');
+  });
+
+  // 国家排行
+  var el=document.getElementById('tblCountries');
+  if(hasData){
+    var max=d.countries[0].value;
+    var total=d.countries.reduce(function(a,b){return a+b.value;},0);
+    var h='<thead><tr><th class="rank">#</th><th>'+t('国家 / 地区')+'</th><th class="right">'+t('访客')+'</th><th class="right">'+t('占比')+'</th></tr></thead><tbody>';
+    for(var i=0;i<d.countries.length;i++){
+      var r=d.countries[i];
+      var pctv = total ? (r.value/total*100).toFixed(1) : '0.0';
+      h+='<tr><td class="rank">'+(i+1)+'</td>'+
+         '<td>'+escapeHtml(countryName(r.code, r.name))+'</td>'+
+         '<td class="right">'+fmtNum(r.value)+'</td>'+
+         '<td class="right" style="color:var(--muted)">'+pctv+'%</td></tr>';
+    }
+    el.innerHTML=h+'</tbody>';
+  } else {
+    el.innerHTML='<tr><td class="empty">'+t('暂无地域数据')+'</td></tr>';
+  }
+
+  renderGeoTree(d.geo_tree);
+}
+
+function renderGeoTree(tree){
+  var el=document.getElementById('geoTree');
+  if(!tree || !tree.length){
+    el.innerHTML='<div class="empty">'+t('暂无地域数据')+'</div>';
+    return;
+  }
+  var h='<table class="visitor-table"><thead><tr><th style="width:30px"></th>'
+       +'<th>'+t('国家 / 地区')+'</th><th class="right">'+t('访客')+'</th><th class="right">'+t('城市数')+'</th></tr></thead><tbody>';
+  for(var i=0;i<tree.length;i++){
+    var c=tree[i];
+    var hasCities = c.cities && c.cities.length;
+    var icon = hasCities ? '<span class="expand-icon" id="gexp-'+i+'">▶</span>' : '<span style="color:var(--faint);font-size:10px">—</span>';
+    var click = hasCities ? 'onclick="toggleGeo('+i+')"' : '';
+      h+='<tr class="visitor-row" '+click+'>'
+      +'<td>'+icon+'</td>'
+      +'<td>'+escapeHtml(countryName(c.code, c.name))+'</td>'
+      +'<td class="right">'+fmtNum(c.value)+'</td>'
+      +'<td class="right" style="color:var(--muted)">'+(hasCities?c.cities.length:'—')+'</td></tr>';
+    if(hasCities){
+      var ch='';
+      for(var j=0;j<c.cities.length;j++){
+        var ct=c.cities[j];
+        ch+='<tr><td></td>'
+           +'<td style="padding-left:28px;color:var(--muted)">'+escapeHtml(SA_LANG==='en' ? (ct.name||'') : cityCn(ct.name))+'</td>'
+           +'<td class="right">'+fmtNum(ct.value)+'</td>'
+           +'<td></td></tr>';
+      }
+      h+='<tr class="visitor-actions" id="gact-'+i+'" style="display:none"><td colspan="4">'
+        +'<div class="actions-wrap"><div class="actions-head">'+escapeHtml(countryName(c.code, c.name))+t('下的城市')+'</div>'
+        +'<table><tbody>'+ch+'</tbody></table></div></td></tr>';
+    }
+  }
+  h+='</tbody></table>';
+  el.innerHTML=h;
+}
+
+function toggleGeo(idx){
+  var row=document.getElementById('gact-'+idx);
+  var icon=document.getElementById('gexp-'+idx);
+  if(!row) return;
+  if(row.style.display==='none'){ row.style.display='table-row'; if(icon) icon.textContent='▼'; }
+  else { row.style.display='none'; if(icon) icon.textContent='▶'; }
+}
+
+function hostOf(u){ try{ return new URL(u).hostname; }catch(e){ return u; } }
+function shortId(s){ s=s||''; return s.length>10 ? s.substring(0,6)+'…' : s; }
+function fullUrl(site, path){
+  if(!site) return '';
+  var p = path || '/';
+  if(p.charAt(0) !== '/') p = '/' + p;
+  return 'https://' + site + p;
+}
+function middleEllipsis(s, max){
+  max = max || 48;
+  s = s || '';
+  if(s.length <= max) return s;
+  var keep = max - 1;
+  var head = Math.ceil(keep / 2);
+  var tail = keep - head;
+  return s.slice(0, head) + '…' + s.slice(s.length - tail);
+}
+function pageLink(site, path){
+  var url = fullUrl(site, path);
+  if(!url) return '<span class="cell-path mono">'+escapeHtml(path||'—')+'</span>';
+  var label = middleEllipsis(url, 48);
+  return '<a class="page-link" href="'+escapeHtml(url)+'" target="_blank" rel="noopener" '+
+    'title="'+escapeHtml(url)+'">'+escapeHtml(label)+'</a>';
+}
+function escapeHtml(s){
+  return (s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+}
+
+// ===== 来源筛选（来源页锚点 + 访客标签下拉，均按统一来源类型筛选访客）=====
+var activeFilter = null;  // {kind:'source'|'refdomain', value, label}
+function filterAnchor(kind, value, label){
+  return '<a class="filter-link" href="javascript:void(0)" data-kind="'+escapeHtml(kind)+'" '+
+    'data-val="'+escapeHtml(value)+'" onclick="applyFilterFromEl(this)">'+escapeHtml(label)+'</a>';
+}
+function applyFilterFromEl(el){
+  applyFilter(el.getAttribute('data-kind'), el.getAttribute('data-val'), el.textContent);
+}
+function applyFilter(kind, value, label){
+  activeFilter = {kind:kind, value:value, label:label};
+  renderFilterChip();
+  switchTab('visitors');
+  safeCall(loadVisitors);
+  safeCall(function(){ loadRecent(true); });
+}
+// 访客标签下拉筛选（已在访客标签内，不切标签）
+function setSourceFilter(kind, value, label){
+  activeFilter = {kind:kind, value:value, label:label};
+  renderFilterChip();
+  safeCall(loadVisitors);
+  safeCall(function(){ loadRecent(true); });
+}
+function clearFilter(){
+  activeFilter = null;
+  renderFilterChip();
+  populateVisitorSourceFilter();
+  safeCall(loadVisitors);
+  safeCall(function(){ loadRecent(true); });
+}
+// 用来源类型 / 来源域名填充访客标签下拉，并反映当前选中态
+function populateVisitorSourceFilter(){
+  var sel = document.getElementById('visitorSourceSel');
+  if(!sel) return;
+  var d = window.__lastStats || {};
+  var sources = d.sources || [];
+  var referrer = d.referrer || [];
+  var cur = activeFilter ? (activeFilter.kind+':'+activeFilter.value) : '';
+  var html = '<option value="" data-i18n="全部来源">'+escapeHtml(t('全部来源'))+'</option>';
+  if(sources.length){
+    html += '<optgroup label="'+escapeHtml(t('来源类型'))+'">';
+    for(var i=0;i<sources.length;i++){
+      var s = sources[i];
+      var key = 'source:'+s.category;
+      html += '<option value="'+escapeHtml(key)+'"'+(key===cur?' selected':'')+'>'+escapeHtml(t(s.label))+'</option>';
+    }
+    html += '</optgroup>';
+  }
+  if(referrer.length){
+    html += '<optgroup label="'+escapeHtml(t('来源域名'))+'">';
+    for(var j=0;j<referrer.length;j++){
+      var r = referrer[j];
+      var key2 = 'refdomain:'+r.name;
+      html += '<option value="'+escapeHtml(key2)+'"'+(key2===cur?' selected':'')+'>'+escapeHtml(r.name)+'</option>';
+    }
+    html += '</optgroup>';
+  }
+  sel.innerHTML = html;
+}
+function onVisitorSourceChange(){
+  var sel = document.getElementById('visitorSourceSel');
+  if(!sel) return;
+  var v = sel.value;
+  if(!v){ clearFilter(); return; }
+  var idx = v.indexOf(':');
+  if(idx < 0){ clearFilter(); return; }
+  var kind = v.substring(0, idx);
+  var val = v.substring(idx+1);
+  var label = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : val;
+  setSourceFilter(kind, val, label);
+}
+function renderFilterChip(){
+  var chip = document.getElementById('filterChip');
+  if(!chip) return;
+  if(!activeFilter){ chip.style.display='none'; chip.innerHTML=''; return; }
+  chip.style.display='inline-flex';
+  chip.innerHTML = t('来源筛选：')+'<b>'+escapeHtml(activeFilter.label)+'</b>'+
+    '<span class="filter-x" title="'+t('清除筛选')+'" onclick="clearFilter()">×</span>';
+}
+function getSourceParams(){
+  if(!activeFilter) return '';
+  if(activeFilter.kind==='source') return '&source='+encodeURIComponent(activeFilter.value);
+  if(activeFilter.kind==='refdomain') return '&refdomain='+encodeURIComponent(activeFilter.value);
+  return '';
+}
+
+// ===== 潜在目标访客筛选 =====
+var inquiryOnly = false;
+function getInquiryParams(){ return inquiryOnly ? '&inquiry=1' : ''; }
+function toggleInquiryFilter(){
+  inquiryOnly = !inquiryOnly;
+  var card = document.getElementById('inquiryCard');
+  if(card) card.classList.toggle('active', inquiryOnly);
+  renderInquiryChip();
+  safeCall(loadVisitors);
+}
+function renderInquiryChip(){
+  var chip = document.getElementById('inquiryChip');
+  if(!chip) return;
+  if(!inquiryOnly){ chip.style.display='none'; chip.innerHTML=''; return; }
+  chip.style.display='inline-flex';
+  chip.innerHTML = t('仅看：')+'<b>'+t('潜在目标访客')+'</b><span class="filter-x" title="'+t('清除筛选')+'" onclick="toggleInquiryFilter()">×</span>';
+}
+
+function onWindowChange(){
+  loadRecent(true);
+}
+
+var currentTab='overview';
+var liveTimer=null;
+function switchTab(tab){
+  currentTab=tab;
+  var btns=document.querySelectorAll('#nav button');
+  for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-tab')===tab);
+  var secs=document.querySelectorAll('[id^="tab-"]');
+  for(var j=0;j<secs.length;j++) secs[j].style.display='none';
+  document.getElementById('tab-'+tab).style.display='block';
+  setTimeout(function(){ for(var k in charts){ if(charts[k]) charts[k].resize(); } }, 30);
+  if(liveTimer){ clearInterval(liveTimer); liveTimer=null; }
+  if(visitorTimer){ clearInterval(visitorTimer); visitorTimer=null; }
+  if(dashTimer){ clearInterval(dashTimer); dashTimer=null; }
+  // 切标签时重置暂停状态（若没展开详情/弹窗则恢复自动刷新）
+  checkAutoRefreshPause();
+  if(tab==='realtime'){
+    loadRecent(true);
+    liveTimer=setInterval(function(){ if(!autoRefreshPaused) loadRecent(true); }, 15000);
+  } else if(tab==='visitors'){
+    loadVisitors();
+    populateVisitorSourceFilter();
+    visitorTimer=setInterval(function(){ if(!autoRefreshPaused) loadVisitors(); }, 30000);
+  } else {
+    loadData(tab);
+    dashTimer=setInterval(function(){ if(!autoRefreshPaused) loadData(currentTab); }, 60000);
+  }
+}
+function checkAutoRefreshPause(){
+  // 展开任意访客详情，或站点管理/弹窗打开时暂停自动刷新
+  var hasExpanded = Object.keys(expandedVisitors).length > 0;
+  var modalOpen = document.getElementById('siteModal') && document.getElementById('siteModal').style.display === 'flex';
+  setAutoRefreshPaused(hasExpanded || modalOpen);
+}
+
+window.addEventListener('resize', function(){ for(var k in charts){ if(charts[k]) charts[k].resize(); } });
+
+// ---------------- 站点管理 ----------------
+function openSiteManager(){ document.getElementById('siteModal').style.display='flex'; fillDeployCode(); loadManagedSites(); loadRetentionSettings(); blockedExpanded=false; var bl=document.getElementById('blockedList'); if(bl) bl.style.display='none'; var ba=document.getElementById('blockedArrow'); if(ba) ba.textContent='▸'; var bl2=document.getElementById('blockedLabel'); if(bl2) bl2.textContent=t('展开已屏蔽访客'); loadBlocked(); checkAutoRefreshPause(); var xb=document.querySelector('#siteModal .x'); if(xb) xb.focus(); }
+function closeSiteManager(){ document.getElementById('siteModal').style.display='none'; checkAutoRefreshPause(); }
+function loadRetentionSettings(){
+  fetch(apiUrl('/api/admin/settings'))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      safeCall(function(){
+        if(res.status){
+          var inp=document.getElementById('retentionDays');
+          if(inp && res.retention_days) inp.value=res.retention_days;
+          var lp=document.getElementById('leadPatterns');
+          if(lp){
+            if(res.lead_patterns && res.lead_patterns.length){
+              lp.value = res.lead_patterns.join('\n');
+            } else { lp.value=''; }
+          }
+          var tz=document.getElementById('tzOffset');
+          if(tz && res.timezone_offset!=null) tz.value=res.timezone_offset;
+        }
+      });
+    }).catch(function(e){ console.error(e); });
+}
+function saveLeadPatterns(){
+  var lp=document.getElementById('leadPatterns');
+  var patterns = lp ? lp.value.split('\n') : [];
+  fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lead_patterns:patterns})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      var r=document.getElementById('leadResult');
+      if(res.status){ if(r) r.textContent=t('已保存设置。'); }
+      else { if(r) r.textContent=t('保存失败'); setTip(t('保存失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('保存失败：')+e, true); });
+}
+function resetLeadPatterns(){
+  var lp=document.getElementById('leadPatterns');
+  if(lp) lp.value='';
+  fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lead_patterns:[]})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      var r=document.getElementById('leadResult');
+      if(res.status){
+        if(r) r.textContent=t('已保存设置。');
+        if(lp) lp.value='';
+      } else { if(r) r.textContent=t('保存失败'); }
+    }); })
+    .catch(function(e){ console.error(e); });
+}
+function saveTimezone(){
+  var tz=document.getElementById('tzOffset');
+  var off = tz ? parseFloat(tz.value) : NaN;
+  if(isNaN(off) || off<-12 || off>14){ setTip(t('时区偏移应在 -12 ~ +14 之间'), true); return; }
+  fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({timezone_offset:off})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      var r=document.getElementById('tzResult');
+      if(res.status){ if(r) r.textContent=t('已保存设置。'); if(currentSite) loadData(); }
+      else { if(r) r.textContent=t('保存失败'); setTip(t('保存失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('保存失败：')+e, true); });
+}
+function saveRetention(){
+  var inp=document.getElementById('retentionDays');
+  var days=parseInt(inp.value,10);
+  if(!days || days<30){ setTip(t('保留天数至少为 30 天'), true); return; }
+  fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({retention_days:days})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      var r=document.getElementById('retentionResult');
+      if(res.status){ if(r) r.textContent=t('已保存：保留 {n} 天', days); setTip(t('已保存数据保留期为 {n} 天。', days)); }
+      else { if(r) r.textContent=t('保存失败'); setTip(t('保存失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('保存失败：')+e, true); });
+}
+function cleanupNow(){
+  var days=parseInt(document.getElementById('retentionDays').value,10);
+  fetch(apiUrl('/api/admin/settings'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cleanup_now:true, days: (days>=30?days:undefined)})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      var r=document.getElementById('retentionResult');
+      if(res.status){ var n=(res.data&&res.data.deleted)||0; if(r) r.textContent=t('已清理 {n} 条过期事件', n); setTip(t('已清理 {n} 条过期事件', n)); }
+      else { if(r) r.textContent=t('清理失败'); setTip(t('清理失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('清理失败：')+e, true); });
+}
+function fillDeployCode(){ var el=document.getElementById('deployCode'); if(el) el.textContent=buildEmbedCode(); }
+function buildEmbedCode(siteKey){
+  var base = location.origin + BASE;
+  var code = '<script>\n(function(){\n'
+    + '  var s=document.createElement("script");\n'
+    + '  s.src="'+base+'/tracker.js";\n'
+    + '  s.defer=true;\n'
+    + '  s.setAttribute("data-endpoint","'+base+'/api/event");\n';
+  if(siteKey) code += '  s.setAttribute("data-id","'+siteKey+'");\n';
+  code += '  document.head.appendChild(s);\n'
+    + '})();\n<\/script>';
+  return code;
+}
+var managedSites=[];
+function loadManagedSites(){
+  fetch(apiUrl('/api/site'))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      safeCall(function(){
+        managedSites = (res.status && res.sites) ? res.sites : [];
+        renderManagedSites();
+      });
+    }).catch(function(e){ console.error(e); });
+}
+function renderManagedSites(){
+  var el=document.getElementById('siteList');
+  if(!el) return;
+  if(!managedSites.length){
+    el.innerHTML='<div class="empty">'+t('还没有手动添加的站点。添加后会自动生成埋点代码，复制嵌入目标网站即可开始统计。')+'</div>';
+    return;
+  }
+  var h='';
+  for(var i=0;i<managedSites.length;i++){
+    var s=managedSites[i];
+    h+='<div class="site-item" draggable="true" data-idx="'+i+'"'
+      +' ondragstart="siteDragStart(event,'+i+')" ondragover="siteDragOver(event,'+i+')"'
+      +' ondrop="siteDrop(event,'+i+')" ondragend="siteDragEnd(event)">'
+      +'<div class="top">'
+      +'<div class="site-main"><span class="drag-handle" title="'+t('拖动排序')+'">⠿</span>'
+      +'<span class="name">'+escapeHtml(s.site)+'</span>'
+      +(s.label ? '<span class="label">'+escapeHtml(s.label)+'</span>' : '')+'</div>'
+      +'<div class="ops">'
+      +'<button class="mini arrow adm" title="'+t('上移')+'" onclick="moveSite('+i+',-1)"'+(i===0?' disabled':'')+'>▲</button>'
+      +'<button class="mini arrow adm" title="'+t('下移')+'" onclick="moveSite('+i+',1)"'+(i===managedSites.length-1?' disabled':'')+'>▼</button>'
+      +'<button class="mini danger adm" onclick="deleteSiteByIdx('+i+')">'+t('删除')+'</button>'
+      +'</div></div>'
+      +'<div class="code-box" style="margin-top:10px">'
+      +'<pre id="scode_'+i+'">'+escapeHtml(buildEmbedCode(s.site_key))+'</pre>'
+      +'<div class="code-actions">'
+      +'<button class="mini adm" onclick="copyText(\'scode_'+i+'\')">'+t('复制埋点代码')+'</button>'
+      +(s.site_key ? '' : '<button class="mini adm" onclick="regenSiteKey('+i+')">'+t('启用令牌')+'</button>')
+      +'<button class="mini adm" onclick="regenSiteKey('+i+')">'+t('重新生成令牌')+'</button>'
+      +'</div></div></div>';
+  }
+  el.innerHTML=h;
+}
+function moveSite(idx, delta){
+  var j=idx+delta;
+  if(j<0 || j>=managedSites.length) return;
+  var t=managedSites[idx]; managedSites[idx]=managedSites[j]; managedSites[j]=t;
+  renderManagedSites(); saveSiteOrder();
+}
+function deleteSiteByIdx(i){ if(managedSites[i]) deleteSite(managedSites[i].site); }
+function regenSiteKey(idx){
+  var s = managedSites[idx];
+  if(!s) return;
+  if(!confirm(t('确定重新生成「{n}」的部署令牌？\n生成后须用新代码重新嵌入该站点，旧令牌立即失效。', s.site))) return;
+  fetch(apiUrl('/api/site/key'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({site:s.site})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){
+        var i = managedSites.findIndex(function(x){ return x.site===res.site; });
+        if(i>=0) managedSites[i].site_key = res.site_key;
+        renderManagedSites();
+        setTip(t('已重新生成「{n}」的部署令牌，请用新代码重新嵌入。', res.site));
+      } else {
+        setTip(t('生成失败：')+(res.error||t('未知错误')), true);
+      }
+    }); })
+    .catch(function(e){ setTip(t('生成失败：')+e, true); });
+}
+var _siteDragFrom=-1;
+function siteDragStart(e,i){ _siteDragFrom=i; try{ e.dataTransfer.effectAllowed='move'; }catch(_){} var it=e.currentTarget; if(it) it.classList.add('dragging'); }
+function siteDragOver(e,i){ e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} }
+function siteDrop(e,i){ e.preventDefault(); if(_siteDragFrom<0 || _siteDragFrom===i) return; var m=managedSites.splice(_siteDragFrom,1)[0]; managedSites.splice(i,0,m); _siteDragFrom=-1; renderManagedSites(); saveSiteOrder(); }
+function siteDragEnd(e){ _siteDragFrom=-1; var els=document.querySelectorAll('.site-item.dragging'); for(var k=0;k<els.length;k++) els[k].classList.remove('dragging'); }
+function saveSiteOrder(){
+  var order=managedSites.map(function(s){ return s.site; });
+  fetch(apiUrl('/api/site/reorder'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({order:order})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ loadSites(); }
+      else { setTip(t('保存排序失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('保存排序失败：')+e, true); });
+}
+function addSite(){
+  var site=document.getElementById('newSite').value.trim();
+  var label=document.getElementById('newLabel').value.trim();
+  if(!site){ setTip(t('请输入要监控的域名'), true); return; }
+  fetch(apiUrl('/api/site'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({site:site,label:label})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      safeCall(function(){
+        if(!res.status){ setTip(t('添加失败：')+(res.error||t('未知错误')), true); return; }
+        document.getElementById('newSite').value='';
+        document.getElementById('newLabel').value='';
+        loadManagedSites();
+        loadSites();
+        setTip(t('已添加 {n}，请在弹窗中复制埋点代码嵌入目标网站。', res.site));
+      });
+    }).catch(function(e){ setTip(t('添加失败：')+e, true); });
+}
+function deleteSite(site){
+  if(!confirm(t('确定删除站点「{n}」及其全部访问数据？\n此操作不可恢复。', site))) return;
+  fetch(apiUrl('/api/site?site='+encodeURIComponent(site)),{method:'DELETE'})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){
+        setTip(t('已删除站点 {n}（含全部访问数据）。', site));
+        loadManagedSites(); loadSites();
+      } else {
+        setTip(t('删除失败：')+(res.error||res.msg||t('未知错误'))+' ('+t('站点')+': '+site+')', true);
+      }
+    }); })
+    .catch(function(e){ setTip(t('删除失败：')+e, true); });
+}
+function copyText(id){
+  var txt=document.getElementById(id).textContent;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){}, function(){ fallbackCopy(txt); });
+  } else { fallbackCopy(txt); }
+}
+function fallbackCopy(txt){
+  var ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta);
+  ta.select(); try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(ta);
+}
+
+applyThemeAttr();
+applyI18n();
+initRangeSelector();
+
+/* ---------------- 用户管理（v1.5.0 登录鉴权） ---------------- */
+function openUsers(){
+  document.getElementById('userModal').style.display='flex';
+  loadUsersList();
+}
+function closeUsers(){ document.getElementById('userModal').style.display='none'; }
+function loadUsersList(){
+  fetch(apiUrl('/api/admin/users'))
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ renderUsersList(res.data||[]); }
+      else { setTip(t('加载失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('加载失败：')+e, true); });
+}
+function renderUsersList(list){
+  var el=document.getElementById('userList'); if(!el) return;
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var u=list[i];
+    var roleTxt = u.role==='admin' ? t('管理员') : t('普通用户');
+    var stTxt = u.status==='active' ? t('启用') : t('已停用');
+    var ops='';
+    if(currentUser && u.username!==currentUser.username){
+      var uEsc=escapeHtml(u.username).replace(/'/g,'&#39;');
+      ops += '<button class="mini" onclick="userSetRole(\''+uEsc+'\',\''+(u.role==='admin'?'viewer':'admin')+'\')">'+(u.role==='admin'?t('设为普通'):t('设为管理员'))+'</button>';
+      ops += '<button class="mini" onclick="userSetStatus(\''+uEsc+'\',\''+(u.status==='active'?'disabled':'active')+'\')">'+(u.status==='active'?t('停用'):t('启用'))+'</button>';
+      ops += '<button class="mini" onclick="userResetPwd(\''+uEsc+'\')">'+t('重置密码')+'</button>';
+      ops += '<button class="mini danger" onclick="userDelete(\''+uEsc+'\')">'+t('删除')+'</button>';
+    } else {
+      ops += '<span style="color:var(--muted);font-size:12px">'+t('（当前登录）')+'</span>';
+    }
+    h += '<div class="site-item"><div class="top">'
+      +'<div class="site-main"><span class="name">'+escapeHtml(u.username)+'</span></div>'
+      +'<span class="label">'+roleTxt+'</span><span class="label"'+(u.status==='active'?'':' style="color:#dc2626"')+'>'+stTxt+'</span>'
+      +'<div class="ops">'+ops+'</div></div></div>';
+  }
+  el.innerHTML = h || '<div class="empty">'+t('暂无用户。')+'</div>';
+}
+function userAction(payload){
+  fetch(apiUrl('/api/admin/user'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ loadUsersList(); }
+      else { setTip(t('操作失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('操作失败：')+e, true); });
+}
+function userSetRole(u, role){ userAction({action:'role', username:u, role:role}); }
+function userSetStatus(u, st){ userAction({action:'status', username:u, status:st}); }
+function userDelete(u){ if(confirm(t('确定删除用户「{n}」？', u))) userAction({action:'delete', username:u}); }
+function userResetPwd(u){
+  var p=prompt(t('为 {n} 设置新密码（至少 6 位）：', u));
+  if(p===null) return;
+  if(p.length<6){ setTip(t('密码至少 6 位'), true); return; }
+  userAction({action:'reset_password', username:u, password:p});
+}
+function createUser(){
+  var u=document.getElementById('newUser').value.trim();
+  var p=document.getElementById('newUserPwd').value;
+  var role=document.getElementById('newUserRole').value;
+  if(!u||!p){ setTip(t('请输入用户名与密码'), true); return; }
+  fetch(apiUrl('/api/admin/users'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,role:role})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){
+        document.getElementById('newUser').value='';
+        document.getElementById('newUserPwd').value='';
+        setTip(t('已创建用户 {n}。', res.user));
+        loadUsersList();
+      } else { setTip(t('创建失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('创建失败：')+e, true); });
+}
+function logout(){
+  fetch(apiUrl('/api/logout'),{method:'POST'})
+    .then(function(){ location.href='/login'; })
+    .catch(function(){ location.href='/login'; });
+}
+function changeMyPwd(){
+  var oldp=prompt(t('请输入原密码：'));
+  if(oldp===null) return;
+  var newp=prompt(t('请输入新密码（至少 6 位）：'));
+  if(newp===null) return;
+  if(newp.length<6){ setTip(t('密码至少 6 位'), true); return; }
+  fetch(apiUrl('/api/user/password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:oldp,new:newp})})
+    .then(function(r){ return r.json(); })
+    .then(function(res){ safeCall(function(){
+      if(res.status){ setTip(t('密码已修改。')); }
+      else { setTip(t('修改失败：')+(res.error||t('未知错误')), true); }
+    }); })
+    .catch(function(e){ setTip(t('修改失败：')+e, true); });
+}
+
+/* 启动：先校验登录会话，再加载看板；viewer 隐藏管理员控件 */
+(function(){
+  fetch(apiUrl('/api/me'))
+    .then(function(r){ if(r.status===401){ location.href='/login'; return null; } return r.json(); })
+    .then(function(j){
+      if(!j || !j.status){ location.href='/login'; return; }
+      currentUser = j.user || null;
+      var ua=document.getElementById('userArea');
+      if(ua) ua.style.display='inline-flex';
+      var w=document.getElementById('whoami');
+      if(w && currentUser) w.textContent = currentUser.username + (currentUser.role==='admin' ? t('（管理员）') : '');
+      if(currentUser && currentUser.role!=='admin'){
+        var ads=document.querySelectorAll('.adm');
+        for(var k=0;k<ads.length;k++) ads[k].style.display='none';
+      }
+      loadSites();
+    })
+    .catch(function(){ location.href='/login'; });
+})();

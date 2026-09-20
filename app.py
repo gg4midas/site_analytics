@@ -64,7 +64,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -2644,7 +2644,7 @@ class Handler(BaseHTTPRequestHandler):
         if not getattr(self, '_head_mode', False):
             self.wfile.write(data)
 
-    def _send_file(self, path, content_type, cache_seconds=3600):
+    def _send_file(self, path, content_type, cache_seconds=3600, replace_ver=False):
         try:
             try:
                 st = os.stat(path)
@@ -2659,7 +2659,11 @@ class Handler(BaseHTTPRequestHandler):
                     data = f.read()
                 if len(_file_cache) < 64:   # P0-B：最多缓存 64 个静态文件，控制内存占用
                     _file_cache[key] = data
-            etag = '"%d-%d"' % (size, mtime)
+            # v1.6.0：__VER__ 占位符替换（index.html 注入版本号，配合 ?v= 精确破静态缓存）；
+            # ETag 纳入 VERSION——版本升级即使 index.html 本身未变也会 200 拉新，避免旧壳引用旧静态资源
+            if replace_ver:
+                data = data.decode('utf-8').replace('__VER__', VERSION).encode('utf-8')
+            etag = ('"%s-%d-%d"' % (VERSION, size, mtime)) if replace_ver else ('"%d-%d"' % (size, mtime))
             head = getattr(self, '_head_mode', False)
             inm = self.headers.get('If-None-Match', '')
             if inm and inm == etag:
@@ -2976,7 +2980,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth_page(): return
             idx = os.path.join(self.www_root, 'index.html')
             # index.html 是前端主壳，升级后必须立即生效；关闭浏览器长缓存（每次请求都通过 ETag 重新验证）
-            self._send_file(idx, 'text/html; charset=utf-8', cache_seconds=0)
+            # v1.6.0：壳内静态引用带 ?v=__VER__，serve 时注入 VERSION（发版即破缓存）
+            self._send_file(idx, 'text/html; charset=utf-8', cache_seconds=0, replace_ver=True)
             return
 
         if path.startswith('/static/'):
@@ -2999,7 +3004,10 @@ class Handler(BaseHTTPRequestHandler):
                 ctype = 'application/json; charset=utf-8'
             elif fpath.endswith('.html'):
                 ctype = 'text/html; charset=utf-8'
-            self._send_file(fpath, ctype)
+            # v1.6.0：静态资源长缓存 1 天（?v=VERSION 破缓存），CSS 显式 text/css
+            if fpath.endswith('.css'):
+                ctype = 'text/css; charset=utf-8'
+            self._send_file(fpath, ctype, cache_seconds=86400)
             return
 
         self.send_error(404)
