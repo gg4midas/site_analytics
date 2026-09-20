@@ -64,7 +64,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -2524,30 +2524,50 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · 站点流量统计</title>
 <style>
-  :root { color-scheme: light; }
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-         background:#f3f5f9; color:#1f2937; }
-  .card { width:360px; max-width:92vw; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
-          padding:28px 28px 22px; box-shadow:0 4px 24px rgba(31,41,55,.08); position:relative; }
-  .lang { position:absolute; top:14px; right:14px; padding:3px 10px; border:1px solid #d1d5db;
-          background:#fff; border-radius:8px; cursor:pointer; font-size:12px; color:#374151; }
-  .lang:hover { border-color:#2563eb; color:#2563eb; }
-  h1 { font-size:18px; margin:0 0 4px; }
-  .sub { font-size:12.5px; color:#6b7280; margin-bottom:18px; }
-  .tabs { display:flex; gap:6px; margin-bottom:16px; }
-  .tabs button { flex:1; padding:8px 0; border:1px solid #d1d5db; background:#fff; border-radius:8px;
-                 cursor:pointer; font-size:14px; color:#374151; }
-  .tabs button.on { background:#2563eb; border-color:#2563eb; color:#fff; }
-  label { display:block; font-size:13px; margin:10px 0 4px; color:#374151; }
-  input { width:100%; padding:9px 10px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; }
-  input:focus { outline:2px solid #93c5fd; border-color:#2563eb; }
-  .btn { width:100%; margin-top:16px; padding:10px 0; border:0; border-radius:8px; background:#2563eb;
-         color:#fff; font-size:15px; cursor:pointer; }
-  .btn:disabled { opacity:.6; cursor:default; }
-  .msg { min-height:18px; margin-top:10px; font-size:13px; color:#dc2626; text-align:center; }
-  .hint { font-size:12px; color:#9ca3af; margin-top:14px; line-height:1.6; }
+         background:#05070d; color:#e8f1fb; overflow:hidden; }
+  body::before { content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+         background:
+           radial-gradient(46rem 28rem at 78% -10%, rgba(167,139,250,.20), transparent 62%),
+           radial-gradient(42rem 26rem at -8% 18%, rgba(56,189,248,.16), transparent 60%),
+           radial-gradient(34rem 22rem at 55% 115%, rgba(34,211,238,.10), transparent 62%); }
+  body::after { content:''; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.5;
+         background-image:radial-gradient(rgba(148,178,224,.10) 1px, transparent 1px);
+         background-size:26px 26px;
+         -webkit-mask-image:radial-gradient(60rem 40rem at 50% 0%, #000 30%, transparent 78%);
+         mask-image:radial-gradient(60rem 40rem at 50% 0%, #000 30%, transparent 78%); }
+  .card { position:relative; z-index:1; width:372px; max-width:92vw;
+          background:rgba(13,20,32,.72); border:1px solid rgba(88,116,160,.42); border-radius:16px;
+          padding:28px 28px 22px; backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+          box-shadow:0 24px 70px rgba(0,0,0,.6), 0 0 44px rgba(56,189,248,.18), inset 0 1px 0 rgba(255,255,255,.06); }
+  .lang { position:absolute; top:14px; right:14px; padding:3px 10px; border:1px solid rgba(88,116,160,.42);
+          background:rgba(17,26,41,.8); border-radius:8px; cursor:pointer; font-size:12px; color:#8fa3bd;
+          transition:border-color .12s, color .12s, box-shadow .12s; }
+  .lang:hover { border-color:#38bdf8; color:#38bdf8; box-shadow:0 0 12px rgba(56,189,248,.25); }
+  h1 { font-size:18px; margin:0 0 4px;
+       background:linear-gradient(120deg,#e8f1fb 40%,#38bdf8 80%,#a78bfa);
+       -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { font-size:12.5px; color:#8fa3bd; margin-bottom:18px; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; background:rgba(17,26,41,.7);
+          border:1px solid rgba(56,78,112,.30); border-radius:9px; padding:3px; }
+  .tabs button { flex:1; padding:7px 0; border:0; background:transparent; border-radius:7px;
+                 cursor:pointer; font-size:14px; color:#8fa3bd; transition:all .15s; }
+  .tabs button.on { background:linear-gradient(135deg,#38bdf8,#a78bfa); color:#06121f; font-weight:700;
+                    box-shadow:0 0 14px rgba(56,189,248,.30); }
+  label { display:block; font-size:13px; margin:10px 0 4px; color:#c9d8ec; }
+  input { width:100%; padding:9px 10px; border:1px solid rgba(56,78,112,.30); border-radius:8px; font-size:14px;
+          background:rgba(7,11,19,.6); color:#e8f1fb; transition:border-color .12s, box-shadow .12s; }
+  input:focus { outline:none; border-color:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,.14); }
+  .btn { width:100%; margin-top:16px; padding:10px 0; border:0; border-radius:8px;
+         background:linear-gradient(135deg,#38bdf8,#a78bfa); color:#06121f; font-size:15px; font-weight:700;
+         cursor:pointer; box-shadow:0 2px 12px rgba(56,189,248,.30); transition:filter .12s, transform .12s, box-shadow .12s; }
+  .btn:hover { filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 4px 18px rgba(56,189,248,.4); }
+  .btn:disabled { opacity:.6; cursor:default; transform:none; }
+  .msg { min-height:18px; margin-top:10px; font-size:13px; color:#f87171; text-align:center; }
+  .hint { font-size:12px; color:#6e819e; margin-top:14px; line-height:1.6; }
 </style>
 </head>
 <body>

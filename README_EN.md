@@ -48,7 +48,11 @@ The analytics dashboard (`index.html`) is a single-page console. The top bar let
 | Site Management | Add/remove sites, generate snippet, set data-retention period, manage blocked visitors |
 
 
-<img width="1920" height="919" alt="illustration_sa_dashboard" src="https://github.com/user-attachments/assets/4dc90907-2358-4edc-88d3-67ee247533c3" />
+![Dashboard overview · dark tech theme](docs/screenshot-overview-dark.png)
+
+| Login (dark glassmorphism) | Overview (light theme, one-click toggle) |
+|---|---|
+| ![Login](docs/screenshot-login.png) | ![Light theme](docs/screenshot-overview-light.png) |
 
 ---
 

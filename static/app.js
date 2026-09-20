@@ -47,7 +47,15 @@ function switchLang(lang){
   populateVisitorSourceFilter();
 }
 var ECHARTS_OK = (typeof echarts !== 'undefined');
-var currentTheme = (localStorage.getItem('sa_theme') || 'light');
+var currentTheme = (function(){
+  // v2 视觉升级：深色科技主题设为默认；老用户若停留在浅色，一次性迁移到深色（仍可手动切回）
+  if(!localStorage.getItem('sa_theme_v2')){
+    localStorage.setItem('sa_theme_v2','1');
+    localStorage.setItem('sa_theme','dark');
+    return 'dark';
+  }
+  return (localStorage.getItem('sa_theme') || 'dark');
+})();
 function applyThemeAttr(){
   document.documentElement.setAttribute('data-theme', currentTheme);
   var bt = document.getElementById('btnTheme');
@@ -130,9 +138,9 @@ function applyChartTheme(c){
   } else {
     c.setOption({
       backgroundColor:'transparent',
-      textStyle:{color:'#8b98a9'},
+      textStyle:{color:'#8fa3bd'},
       grid:{left:48,right:18,top:30,bottom:30},
-      tooltip:{backgroundColor:'#1b2230',borderColor:'#2c3543',textStyle:{color:'#e6edf3'}}
+      tooltip:{backgroundColor:'rgba(13,20,32,.94)',borderColor:'rgba(88,116,160,.45)',textStyle:{color:'#e8f1fb'},extraCssText:'box-shadow:0 8px 28px rgba(0,0,0,.5);backdrop-filter:blur(6px);border-radius:9px;'}
     });
   }
 }
@@ -263,13 +271,13 @@ function mapPalette(){
   // 9 级热力色阶：最浅档也要与「无数据底色」明显区分（浅蓝→蓝→青→绿→黄绿→黄→橙→红→深红）
   return currentTheme==='light'
     ? ['#cfe6fa','#a5d3ef','#79bfe6','#4ba7d6','#2c8fbd','#7fc24a','#f4c542','#ef8a3c','#e0533d']
-    : ['#2c5468','#2f6f83','#2f8a8f','#33a37f','#5fb03e','#a8bf3a','#d8b13a','#d97a2b','#d6452e'];
+    : ['#173a63','#1b4f7e','#1f6a96','#2384a8','#26a2a2','#2fbf8f','#8fc93a','#d8b13a','#ef7d2c'];
 }
 function mapAreaStyle(){
   // 无数据国家：用中性灰，避免和最浅热力档（1-2）撞色
   return currentTheme==='light'
     ? {areaColor:'#e5e8ee',borderColor:'#cfd6e0',borderWidth:0.5}
-    : {areaColor:'#161b24',borderColor:'#2c3543',borderWidth:0.5};
+    : {areaColor:'#0d1626',borderColor:'rgba(88,116,160,.35)',borderWidth:0.6};
 }
 // 子域语言前缀（www/de/fr…），用于区分同路径的多语言页面
 function sitePrefix(site){
@@ -281,10 +289,10 @@ function sitePrefix(site){
 function pieBorder(){
   return currentTheme==='light'
     ? {borderColor:'#ffffff',borderWidth:1}
-    : {borderColor:'#11161f',borderWidth:2};
+    : {borderColor:'#0d1420',borderWidth:2};
 }
 function pieLabelColor(){
-  return currentTheme==='light' ? '#4a5563' : '#e6edf3';
+  return currentTheme==='light' ? '#4a5563' : '#c9d8ec';
 }
 function loadSites(){
   setTip(t('正在获取站点列表…'));
@@ -546,10 +554,10 @@ function renderOverview(d){
       xAxis:{type:'category',data:xData,name:xLabel,nameTextStyle:{color:'#5b6675'},axisLine:{lineStyle:{color:'#2c3543'}},axisLabel:{color:'#8b98a9',fontSize:11,rotate:isHourly?35:0}},
       yAxis:{type:'value',splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
       series:[
-        {name:t('浏览量'),type:'line',smooth:true,areaStyle:{opacity:.15},data:daily.map(function(x){return x.pv;}),itemStyle:{color:'#1f9cf0'}},
-        {name:t('访客'),type:'line',smooth:true,areaStyle:{opacity:.12},data:daily.map(function(x){return x.uv;}),itemStyle:{color:'#16c2c2'}},
-        {name:t('浏览量(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'#1f9cf0'},itemStyle:{color:'#1f9cf0'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.pv;})},
-        {name:t('访客(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'#16c2c2'},itemStyle:{color:'#16c2c2'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.uv;})}
+        {name:t('浏览量'),type:'line',smooth:true,areaStyle:{opacity:.16},data:daily.map(function(x){return x.pv;}),itemStyle:{color:'#38bdf8'},lineStyle:{width:2.5,shadowBlur:14,shadowColor:'rgba(56,189,248,.55)'},emphasis:{focus:'series'}},
+        {name:t('访客'),type:'line',smooth:true,areaStyle:{opacity:.14},data:daily.map(function(x){return x.uv;}),itemStyle:{color:'#a78bfa'},lineStyle:{width:2.5,shadowBlur:14,shadowColor:'rgba(167,139,250,.5)'},emphasis:{focus:'series'}},
+        {name:t('浏览量(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'rgba(56,189,248,.55)'},itemStyle:{color:'#38bdf8'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.pv;})},
+        {name:t('访客(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'rgba(167,139,250,.55)'},itemStyle:{color:'#a78bfa'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.uv;})}
       ]
     });
   }
@@ -598,7 +606,7 @@ function renderOverview(d){
     cD.setOption({tooltip:{trigger:'axis'},grid:{left:50,right:20,top:20,bottom:30},
       xAxis:{type:'category',data:order,axisLabel:{color:'#8b98a9'}},
       yAxis:{type:'value',axisLabel:{color:'#8b98a9'},splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
-      series:[{type:'bar',data:dv,itemStyle:{color:'#1f9cf0'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]});
+      series:[{type:'bar',data:dv,itemStyle:{color:'#38bdf8'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]});
   }
   renderRankTable('tblLanding', (d.landing_pages||[]).slice(0,10), t('落地页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
   renderRankTable('tblExit', (d.exit_pages||[]).slice(0,10), t('退出页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});

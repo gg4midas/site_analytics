@@ -50,7 +50,11 @@
 | 站点管理 | 添加/删除站点、生成埋点代码、设置数据保留期、管理被屏蔽访客 |
 
 
-<img width="1920" height="919" alt="illustration_sa_dashboard" src="https://github.com/user-attachments/assets/4dc90907-2358-4edc-88d3-67ee247533c3" />
+![看板概览 · 深色科技主题](docs/screenshot-overview-dark.png)
+
+| 登录页（深色玻璃拟态） | 概览（浅色主题，可一键切换） |
+|---|---|
+| ![登录页](docs/screenshot-login.png) | ![浅色主题](docs/screenshot-overview-light.png) |
 
 
 ---

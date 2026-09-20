@@ -18,3 +18,6 @@ __pycache__/
 events分析_异常流量报告.md
 # GeoIP 二进制数据库（运行时用 ./update_geoip.sh 拉取，避免大文件入库）
 geoip/*.mmdb
+
+# UI 预览演示数据（本地临时）
+_preview_data/
