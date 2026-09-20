@@ -65,6 +65,7 @@ function toggleTheme(){
   currentTheme = (currentTheme==='dark') ? 'light' : 'dark';
   localStorage.setItem('sa_theme', currentTheme);
   applyThemeAttr();
+  disposeAllCharts();   // v1.7.1：echarts 主题绑定于 init，切主题必须重建实例
   loadData();
   if(currentTab==='realtime') loadRecent(true);
 }
@@ -121,10 +122,18 @@ function prevTip(v, fmt){
 
 function initChart(id){
   if(!ECHARTS_OK) return null;
-  if(charts[id]) { charts[id].dispose(); }
+  // v1.7.1：复用图表实例（原先每次 loadData dispose+init，有闪烁与 GC 开销）。
+  // 配套约定：全量渲染用 setOption(option, true)（notMerge，防旧 series 残留），
+  // applyChartTheme 在 setOption 之后调用（merge 叠加主题底色/tooltip）。
+  // 注意：echarts 主题在 init 时绑定，切换深浅主题必须先 disposeAllCharts 重建实例。
+  if(charts[id]) return charts[id];
   var c = echarts.init(document.getElementById(id), currentTheme==='light' ? undefined : 'dark');
   charts[id] = c;
   return c;
+}
+function disposeAllCharts(){
+  for(var k in charts){ try{ charts[k].dispose(); }catch(e){} }
+  charts = {};
 }
 function applyChartTheme(c){
   if(!c) return;
@@ -544,7 +553,7 @@ function renderOverview(d){
   }
   document.getElementById('kpis').innerHTML=html;
 
-  var c1=initChart('chartTrend'); applyChartTheme(c1);
+  var c1=initChart('chartTrend');
   if(c1){
     var xData = daily.map(function(x){ return isHourly ? x.label : x.date.substring(5); });
     var xLabel = isHourly ? t('时间') : t('日期');
@@ -559,46 +568,49 @@ function renderOverview(d){
         {name:t('浏览量(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'rgba(56,189,248,.55)'},itemStyle:{color:'#38bdf8'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.pv;})},
         {name:t('访客(上期)'),type:'line',smooth:true,lineStyle:{type:'dashed',width:1.5,color:'rgba(167,139,250,.55)'},itemStyle:{color:'#a78bfa'},symbol:'none',data:(d.prev&&d.prev.daily_prev?d.prev.daily_prev:[]).map(function(x){return x.uv;})}
       ]
-    });
+    }, true);
+    applyChartTheme(c1);
   }
 
-  var c2=initChart('chartDevice'); applyChartTheme(c2);
+  var c2=initChart('chartDevice');
   if(c2){
     var dd=d.device.map(function(x){return {name:t(x.name),value:x.value};});
     c2.setOption({
       tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
       series:[{type:'pie',radius:['42%','70%'],data:dd,label:{color:pieLabelColor(),fontSize:11},
         itemStyle:pieBorder()}]
-    });
+    }, true);
+    applyChartTheme(c2);
   }
 
-  var c3=initChart('chartSub'); applyChartTheme(c3);
+  var c3=initChart('chartSub');
   if(c3){
     var subs = d.subdomains || [];
     if(!subs.length){
       c3.clear();
-      c3.setOption({title:{text:t('暂无子域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      c3.setOption({title:{text:t('暂无子域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}, true);
     } else {
       c3.setOption({
         tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
         series:[{type:'pie',radius:['42%','70%'],data:subs.map(function(x){return {name:t(x.name),value:x.value};}),
           label:{color:pieLabelColor(),fontSize:11,formatter:'{b}\n{c}'},
           itemStyle:pieBorder()}]
-      });
+      }, true);
+      applyChartTheme(c3);
     }
   }
 
   // 新访客 vs 回访客
-  var cNR=initChart('chartNewReturn'); applyChartTheme(cNR);
+  var cNR=initChart('chartNewReturn');
   if(cNR){
     var nr=d.new_returning||{new:0,returning:0};
     var nrData=[{name:t('新访客'),value:nr.new||0},{name:t('回访客'),value:nr.returning||0}];
-    if((nr.new||0)+(nr.returning||0)===0){ cNR.clear(); cNR.setOption({title:{text:t('暂无数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}); }
-    else cNR.setOption({tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
-      series:[{type:'pie',radius:['45%','72%'],data:nrData,label:{color:pieLabelColor(),fontSize:12,formatter:'{b}\n{d}%'},itemStyle:pieBorder()}]});
+    if((nr.new||0)+(nr.returning||0)===0){ cNR.clear(); cNR.setOption({title:{text:t('暂无数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}, true); }
+    else { cNR.setOption({tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+      series:[{type:'pie',radius:['45%','72%'],data:nrData,label:{color:pieLabelColor(),fontSize:12,formatter:'{b}\n{d}%'},itemStyle:pieBorder()}]}, true); applyChartTheme(cNR); }
   }
   // 访问深度分布
-  var cD=initChart('chartDepth'); applyChartTheme(cD);
+  var cD=initChart('chartDepth');
   if(cD){
     var dp=d.depth_distribution||[];
     var order=['1','2-3','4-6','7+'];
@@ -606,7 +618,8 @@ function renderOverview(d){
     cD.setOption({tooltip:{trigger:'axis'},grid:{left:50,right:20,top:20,bottom:30},
       xAxis:{type:'category',data:order,axisLabel:{color:'#8b98a9'}},
       yAxis:{type:'value',axisLabel:{color:'#8b98a9'},splitLine:{lineStyle:{color:'rgba(44,53,67,.5)'}}},
-      series:[{type:'bar',data:dv,itemStyle:{color:'#38bdf8'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]});
+      series:[{type:'bar',data:dv,itemStyle:{color:'#38bdf8'},barWidth:'45%',label:{show:true,position:'top',color:pieLabelColor()}}]}, true);
+    applyChartTheme(cD);
   }
   renderRankTable('tblLanding', (d.landing_pages||[]).slice(0,10), t('落地页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
   renderRankTable('tblExit', (d.exit_pages||[]).slice(0,10), t('退出页'), function(v){return v;}, true, function(r){return pageLink(r.site || currentSite, r.path);});
@@ -1003,21 +1016,23 @@ function updateLiveKpis(rows, windowMin, online){
 }
 
 function renderContent(d){
-  var c2=initChart('chartUa'); applyChartTheme(c2);
+  var c2=initChart('chartUa');
   if(c2){
     c2.setOption({
       tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
       series:[{type:'pie',roseType:'radius',radius:['30%','70%'],data:d.browser.map(function(x){return {name:t(x.name),value:x.value};}),
         label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
-    });
+    }, true);
+    applyChartTheme(c2);
   }
-  var c3=initChart('chartDevice2'); applyChartTheme(c3);
+  var c3=initChart('chartDevice2');
   if(c3){
     c3.setOption({
       tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
       series:[{type:'pie',radius:['42%','70%'],data:d.device.map(function(x){return {name:t(x.name),value:x.value};}),
         label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
-    });
+    }, true);
+    applyChartTheme(c3);
   }
   renderPagesTable(d.pages);
 }
@@ -1040,14 +1055,15 @@ function renderPagesTable(rows, targetId){
 }
 
 function renderSources(d){
-  var c1=initChart('chartRef'); applyChartTheme(c1);
+  var c1=initChart('chartRef');
   var cats = d.sources || [];
   if(c1){
     c1.setOption({
       tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
       series:[{type:'pie',radius:['40%','70%'],data:cats.map(function(x){return {name:t(x.label),value:x.value};}),
         label:{color:pieLabelColor(),fontSize:11},itemStyle:pieBorder()}]
-    });
+    }, true);
+    applyChartTheme(c1);
   }
   renderRankTable('tblRefCat', cats.map(function(x){return {key:x.category,name:t(x.label),value:x.value};}),
     t('来源类型'), function(v){return v;}, true, function(r){return filterAnchor('source', r.key, r.name);}, t('独立访客'));
@@ -1078,23 +1094,23 @@ function renderGeo(d){
 
   // 世界地图
   loadWorldMap(function(){
-    var c1 = initChart('chartMap'); applyChartTheme(c1);
+    var c1 = initChart('chartMap');
     if(!c1) return;
     if(!d.maxminddb_available){
       c1.clear();
-      c1.setOption({title:{text:t('未安装 maxminddb 库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      c1.setOption({title:{text:t('未安装 maxminddb 库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}, true);
       document.getElementById('geoMapNote').textContent=t('提示：pip install maxminddb 后可启用访客地域与运营商(ISP)识别。');
       return;
     }
     if(!d.geo_enabled){
       c1.clear();
-      c1.setOption({title:{text:t('未配置 GeoIP 数据库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      c1.setOption({title:{text:t('未配置 GeoIP 数据库'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}, true);
       document.getElementById('geoMapNote').textContent=t('提示：请下载 GeoLite2-City.mmdb 放到 geoip/ 目录并重启 app.py。');
       return;
     }
     if(!hasData){
       c1.clear();
-      c1.setOption({title:{text:t('所选周期内暂无地域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}});
+      c1.setOption({title:{text:t('所选周期内暂无地域数据'),left:'center',top:'middle',textStyle:{color:'#5b6675',fontSize:14}}}, true);
       document.getElementById('geoMapNote').textContent=t('提示：GeoIP 已启用，只有加载 GeoIP 之后新产生的访问才会显示地域。');
       return;
     }
@@ -1143,7 +1159,8 @@ function renderGeo(d){
         itemStyle: mapAreaStyle(),
         data:mapData
       }]
-    });
+    }, true);
+    applyChartTheme(c1);
     document.getElementById('geoMapNote').textContent=t('颜色越深表示该国家/地区的独立访客越多。仅展示所选周期内有访问的国家。');
   });
 

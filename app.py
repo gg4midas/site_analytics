@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import json
+import gzip
 import sqlite3
 import ipaddress
 import traceback
@@ -49,6 +50,8 @@ SITES_CACHE_TTL = 30   # 站点列表缓存 30 秒
 STATS_CACHE_MAX = 256  # 统计缓存条目上限；超出按 LRU 淘汰（P0-C 防无界增长）
 ROOT_SITES_TTL = 30    # 主域->子域映射缓存 30 秒（P0-E，与站点列表同源变更失效）
 _file_cache = {}       # path -> (mtime, size, data) 进程内静态资源字节缓存（P0-B 避免每次全量读盘）
+_gzip_cache = {}       # v1.7.1: key=(path,size,mtime,ver) -> gzip 字节缓存（echarts.min.js 1MB 等大文件只压一次）
+GZIP_MIN_SIZE = 1024   # 小于 1KB 不压缩（压不动且有 CPU 开销）
 
 # GeoIP 为可选能力：安装了 maxminddb 且提供 GeoLite2 mmdb 才启用，否则优雅降级
 try:
@@ -64,7 +67,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -202,8 +205,15 @@ class StatEngine(object):
         self.reload_timezone()
 
     # ---------------- 日志 ----------------
+    LOG_ROTATE_SIZE = 10 * 1024 * 1024   # v1.7.1：debug.log 超过 10MB 轮转为 .1（覆盖旧 .1）
     def _log(self, msg):
         try:
+            # v1.7.1 日志轮转：避免长驻进程 debug.log 无限增长
+            try:
+                if os.path.getsize(self._log_file) > self.LOG_ROTATE_SIZE:
+                    os.replace(self._log_file, self._log_file + '.1')
+            except OSError:
+                pass
             with open(self._log_file, 'a', encoding='utf-8') as f:
                 f.write("[%s] %s\n" % (datetime.now().strftime('%H:%M:%S'), msg))
         except Exception:
@@ -946,12 +956,16 @@ class StatEngine(object):
             pass
 
     def purge_expired_sessions(self):
+        """删除过期会话，返回清理条数（供定时维护任务统计输出）。"""
+        n = 0
         try:
             conn = self._conn()
-            conn.execute("DELETE FROM sessions WHERE expires < ?", (int(time.time() * 1000),))
+            cur = conn.execute("DELETE FROM sessions WHERE expires < ?", (int(time.time() * 1000),))
+            n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
             conn.commit(); conn.close()
         except Exception:
             pass
+        return n
 
     # ---------------- 写入 ----------------
     def add_event(self, ev):
@@ -2683,11 +2697,30 @@ class Handler(BaseHTTPRequestHandler):
     require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'（严格模式）
     www_root = None
 
+    def _accepts_gzip(self):
+        """v1.7.1：客户端是否接受 gzip（HEAD 请求不压缩，避免 Content-Length 语义混乱）。"""
+        if getattr(self, '_head_mode', False):
+            return False
+        return 'gzip' in (self.headers.get('Accept-Encoding', '') or '').lower()
+
+    @staticmethod
+    def _compressible(content_type):
+        ct = (content_type or '').split(';')[0].strip().lower()
+        return ct.startswith('text/') or ct in ('application/javascript', 'application/json',
+                                                'application/x-javascript', 'image/svg+xml')
+
     def _send_json(self, obj, code=200, cors=None):
         data = json.dumps(obj, ensure_ascii=False).encode('utf-8')
+        gz = False
+        # v1.7.1：大 JSON（stats 等几十 KB）gzip 传输，看板流量降 70%+
+        if len(data) >= GZIP_MIN_SIZE and self._accepts_gzip():
+            data = gzip.compress(data, 6); gz = True
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
+        if gz:
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Vary', 'Accept-Encoding')
         # P0-F：仅公开上报端点 /api/event 需要跨域（浏览器埋点从任意站点回传）；
         #       其余查询接口默认不返回 Access-Control-Allow-Origin，避免任意第三方网页跨域读取统计/访客数据（隐私友好）
         if cors:
@@ -2700,10 +2733,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_html(self, html, code=200):
         data = html.encode('utf-8')
+        gz = False
+        if len(data) >= GZIP_MIN_SIZE and self._accepts_gzip():
+            data = gzip.compress(data, 6); gz = True
         self.send_response(code)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Cache-Control', 'no-store')
+        if gz:
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Vary', 'Accept-Encoding')
         self.end_headers()
         if not getattr(self, '_head_mode', False):
             self.wfile.write(data)
@@ -2728,6 +2767,17 @@ class Handler(BaseHTTPRequestHandler):
             if replace_ver:
                 data = data.decode('utf-8').replace('__VER__', VERSION).encode('utf-8')
             etag = ('"%s-%d-%d"' % (VERSION, size, mtime)) if replace_ver else ('"%d-%d"' % (size, mtime))
+            # v1.7.1：静态资源 gzip（echarts.min.js 1MB → ~300KB），压缩结果按 (path,mtime,ver) 缓存只压一次；
+            # gzip 响应 ETag 追加 -g 变体，与 identity 响应区分，避免 304 协商返回错误编码的缓存
+            if self._accepts_gzip() and len(data) >= GZIP_MIN_SIZE and self._compressible(content_type):
+                gkey = (path, size, mtime, VERSION if replace_ver else '')
+                gdata = _gzip_cache.get(gkey)
+                if gdata is None:
+                    gdata = gzip.compress(data, 6)
+                    if len(_gzip_cache) < 64:
+                        _gzip_cache[gkey] = gdata
+                data = gdata
+                etag = etag[:-1] + '-g"'
             head = getattr(self, '_head_mode', False)
             inm = self.headers.get('If-None-Match', '')
             if inm and inm == etag:
@@ -2742,6 +2792,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Cache-Control', 'public, max-age=%d' % cache_seconds)
             self.send_header('ETag', etag)
+            if etag.endswith('-g"'):
+                self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Vary', 'Accept-Encoding')
             self.end_headers()
             if not head:
                 self.wfile.write(data)
@@ -3458,6 +3511,17 @@ def main():
             sys.stderr.write('[warn] 历史路径清洗失败：%s\n' % e)
     _startup_thread = threading.Thread(target=_run_startup_tasks, daemon=True)
     _startup_thread.start()
+    # v1.7.1：常驻定时维护线程——过期会话每小时清理一次（原先只在启动时清一次，长驻进程 sessions 表只增不减）
+    def _run_periodic_maintenance():
+        while True:
+            time.sleep(3600)
+            try:
+                n = engine.purge_expired_sessions()
+                if n:
+                    sys.stderr.write('[info] 定时维护：已清理过期会话 %d 个\n' % n)
+            except Exception as e:
+                sys.stderr.write('[warn] 定时会话清理失败：%s\n' % e)
+    threading.Thread(target=_run_periodic_maintenance, daemon=True).start()
     Handler.engine = engine
     Handler.deploy_key = (args.deploy_key or '').strip() or DEPLOY_KEY
     Handler.require_key = bool(args.require_key) or REQUIRE_KEY
