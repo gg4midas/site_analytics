@@ -64,7 +64,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -2530,7 +2530,10 @@ _LOGIN_HTML = """<!DOCTYPE html>
          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
          background:#f3f5f9; color:#1f2937; }
   .card { width:360px; max-width:92vw; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
-          padding:28px 28px 22px; box-shadow:0 4px 24px rgba(31,41,55,.08); }
+          padding:28px 28px 22px; box-shadow:0 4px 24px rgba(31,41,55,.08); position:relative; }
+  .lang { position:absolute; top:14px; right:14px; padding:3px 10px; border:1px solid #d1d5db;
+          background:#fff; border-radius:8px; cursor:pointer; font-size:12px; color:#374151; }
+  .lang:hover { border-color:#2563eb; color:#2563eb; }
   h1 { font-size:18px; margin:0 0 4px; }
   .sub { font-size:12.5px; color:#6b7280; margin-bottom:18px; }
   .tabs { display:flex; gap:6px; margin-bottom:16px; }
@@ -2549,31 +2552,71 @@ _LOGIN_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <div class="card">
-  <h1>站点流量统计</h1>
-  <div class="sub">请登录后访问分析看板</div>
+  <button id="langToggle" class="lang" type="button" title="Language">EN</button>
+  <h1 data-i18n="站点流量统计">站点流量统计</h1>
+  <div class="sub" data-i18n="请登录后访问分析看板">请登录后访问分析看板</div>
   <div class="tabs">
-    <button id="tab-login" class="on" type="button">登录</button>
-    <button id="tab-reg" type="button">注册</button>
+    <button id="tab-login" class="on" type="button" data-i18n="登录">登录</button>
+    <button id="tab-reg" type="button" data-i18n="注册">注册</button>
   </div>
   <form id="f">
-    <label for="u">用户名</label>
+    <label for="u" data-i18n="用户名">用户名</label>
     <input id="u" autocomplete="username" maxlength="32" required>
-    <label for="p">密码</label>
+    <label for="p" data-i18n="密码">密码</label>
     <input id="p" type="password" autocomplete="current-password" minlength="6" required>
-    <label for="p2" id="lbl-p2" style="display:none">确认密码</label>
+    <label for="p2" id="lbl-p2" style="display:none" data-i18n="确认密码">确认密码</label>
     <input id="p2" type="password" autocomplete="new-password" style="display:none">
     <button class="btn" id="go" type="submit">登录</button>
   </form>
   <div class="msg" id="msg"></div>
-  <div class="hint">首个注册的用户自动成为管理员；其余用户为只查看板。<br>登录会话有效期 7 天，退出登录后立即失效。</div>
+  <div class="hint"><span data-i18n="首个注册的用户自动成为管理员；其余用户为只查看板。">首个注册的用户自动成为管理员；其余用户为只查看板。</span><br><span data-i18n="登录会话有效期 7 天，退出登录后立即失效。">登录会话有效期 7 天，退出登录后立即失效。</span></div>
 </div>
 <script>
 var mode='login';
+/* 登录页 i18n（v1.6.1）：与看板共享 sa_lang 偏好（zh 为键，en 查字典） */
+var LANG=(function(){ var l=localStorage.getItem('sa_lang'); return (l==='en')?'en':'zh'; })();
+var I18N_EN={
+'站点流量统计':'Website Analytics',
+'请登录后访问分析看板':'Sign in to access the analytics dashboard',
+'登录':'Sign in',
+'注册':'Register',
+'注册并进入':'Register & enter',
+'用户名':'Username',
+'密码':'Password',
+'确认密码':'Confirm password',
+'首个注册的用户自动成为管理员；其余用户为只查看板。':'The first registered user automatically becomes an admin; other users get read-only access to the dashboard.',
+'登录会话有效期 7 天，退出登录后立即失效。':'Sessions last 7 days and are invalidated immediately after logout.',
+'请输入用户名与密码':'Please enter username and password',
+'密码至少 6 位':'Password must be at least 6 characters',
+'两次输入的密码不一致':'Passwords do not match',
+'网络错误，请重试':'Network error, please try again',
+'登录 · 站点流量统计':'Sign in · Website Analytics'
+};
+var ERR_EN={
+'用户名或密码错误':'Incorrect username or password',
+'尝试过于频繁，请稍后再试':'Too many attempts, please try again later',
+'用户名不合法（2-32 位字母/数字/下划线/连字符/中文）':'Invalid username (2-32 chars: letters/digits/underscore/hyphen/CJK)',
+'用户名已存在':'Username already exists'
+};
+function t(k){ return (LANG==='en' && I18N_EN[k]!=null) ? I18N_EN[k] : k; }
+function te(s){ if(LANG!=='en'||s==null) return s; return (ERR_EN[s]!=null)?ERR_EN[s]:s; }
+function applyLoginI18n(){
+  document.title = t('登录 · 站点流量统计');
+  var nodes=document.querySelectorAll('[data-i18n]');
+  for(var i=0;i<nodes.length;i++){ nodes[i].textContent=t(nodes[i].getAttribute('data-i18n')); }
+  document.getElementById('go').textContent = (mode==='login') ? t('登录') : t('注册并进入');
+  document.getElementById('langToggle').textContent = (LANG==='en') ? '中' : 'EN';
+}
+document.getElementById('langToggle').onclick=function(){
+  LANG = (LANG==='en') ? 'zh' : 'en';
+  localStorage.setItem('sa_lang', LANG);
+  applyLoginI18n();
+};
 function setMode(m){
   mode=m;
   document.getElementById('tab-login').className = m==='login' ? 'on' : '';
   document.getElementById('tab-reg').className = m==='reg' ? 'on' : '';
-  document.getElementById('go').textContent = m==='login' ? '登录' : '注册并进入';
+  document.getElementById('go').textContent = m==='login' ? t('登录') : t('注册并进入');
   document.getElementById('msg').textContent='';
   document.getElementById('p').setAttribute('autocomplete', m==='login'?'current-password':'new-password');
   var show = (m==='reg');
@@ -2587,9 +2630,9 @@ document.getElementById('f').onsubmit=function(e){
   e.preventDefault();
   var u=document.getElementById('u').value.trim(), p=document.getElementById('p').value;
   var msg=document.getElementById('msg'), go=document.getElementById('go');
-  if(!u||!p){ msg.textContent='请输入用户名与密码'; return; }
-  if(p.length<6){ msg.textContent='密码至少 6 位'; return; }
-  if(mode==='reg' && p!==document.getElementById('p2').value){ msg.textContent='两次输入的密码不一致'; return; }
+  if(!u||!p){ msg.textContent=t('请输入用户名与密码'); return; }
+  if(p.length<6){ msg.textContent=t('密码至少 6 位'); return; }
+  if(mode==='reg' && p!==document.getElementById('p2').value){ msg.textContent=t('两次输入的密码不一致'); return; }
   go.disabled=true; msg.textContent='';
   fetch('/api/'+(mode==='login'?'login':'register'),{
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -2600,11 +2643,12 @@ document.getElementById('f').onsubmit=function(e){
     }); })
     .then(function(res){
       if(res.code===200){ location.replace('/'); return; }
-      msg.textContent=(res.j&&res.j.error)||('失败 ('+res.code+')');
+      msg.textContent=(res.j&&res.j.error)?te(res.j.error):((LANG==='en')?('Failed ('+res.code+')'):('失败 ('+res.code+')'));
       go.disabled=false;
     })
-    .catch(function(){ msg.textContent='网络错误，请重试'; go.disabled=false; });
+    .catch(function(){ msg.textContent=t('网络错误，请重试'); go.disabled=false; });
 };
+applyLoginI18n();
 // 已登录则直接进入看板
 fetch('/api/me').then(function(r){ if(r.ok) location.replace('/'); }).catch(function(){});
 </script>

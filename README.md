@@ -84,11 +84,14 @@
 site_analytics/
 ├── app.py                  # 后端服务：事件收集 + 聚合 + 面板 + tracker.js（单文件）
 ├── tracker.js              # 前端埋点脚本（嵌入被统计网页）
-├── index.html              # 分析面板（本地 ECharts，深色风格）
+├── index.html              # 分析面板 HTML 壳（v1.6.0 起样式与脚本拆分至 static/）
 ├── tracker-loader.html     # 可选的「内联加载器」片段（用于缓存/优化插件较重的站点）
 ├── nginx_bypass_auth.conf  # 反向代理用的两段 location 配置示例（通用 Nginx）
 ├── static/
-│   └── echarts.min.js      # 本地图表库（已随仓库，无需联网）
+│   ├── echarts.min.js      # 本地图表库（已随仓库，无需联网）
+│   ├── style.css           # 面板样式（v1.6.0 拆分自 index.html）
+│   ├── i18n.js             # 面板多语言字典与翻译函数（中/EN，偏好与登录页共享）
+│   └── app.js              # 面板主逻辑（v1.6.0 拆分自 index.html）
 ├── start.sh                # 启动脚本（后台运行，写 run.log）
 ├── restart.sh              # 重启脚本
 ├── sa-console.sh           # 服务器管理控制台：启停 / 重启 / 版本检查升级 / 一键回滚

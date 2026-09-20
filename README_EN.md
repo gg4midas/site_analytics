@@ -81,11 +81,14 @@ The analytics dashboard (`index.html`) is a single-page console. The top bar let
 site_analytics/
 ├── app.py                  # Back end: event collection + aggregation + dashboard + tracker.js (single file)
 ├── tracker.js              # Front-end instrumentation script (embed into tracked pages)
-├── index.html              # Analytics dashboard (local ECharts, dark style)
+├── index.html              # Analytics dashboard HTML shell (styles & scripts split into static/ since v1.6.0)
 ├── tracker-loader.html     # Optional "inline loader" snippet (for sites with heavy cache/optimization plugins)
 ├── nginx_bypass_auth.conf  # Two-location reverse-proxy config example (generic Nginx)
 ├── static/
-│   └── echarts.min.js      # Local chart library (bundled, no network needed)
+│   ├── echarts.min.js      # Local chart library (bundled, no network needed)
+│   ├── style.css           # Dashboard styles (split from index.html in v1.6.0)
+│   ├── i18n.js             # Dashboard i18n dictionary & translation helpers (zh/EN, shared with login page)
+│   └── app.js              # Dashboard app logic (split from index.html in v1.6.0)
 ├── start.sh                # Start script (runs in background, writes run.log)
 ├── restart.sh              # Restart script
 ├── sa-console.sh           # Server management console: start/stop/restart/version-check-upgrade/one-click rollback
