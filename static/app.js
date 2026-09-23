@@ -22,6 +22,7 @@ function setLoading(on){ document.body.classList.toggle('loading', !!on); }
 document.addEventListener('keydown', function(e){
   var m=document.getElementById('siteModal');
   var um=document.getElementById('userModal');
+  if(e.key==='Escape'){ closeUserMenu(); }   // 顶栏账户下拉（v1.8）
   if(e.key==='Escape' && um && um.style.display!=='none'){ closeUsers(); return; }
   if(e.key==='Escape' && m && m.style.display!=='none'){ closeSiteManager(); return; }
   if(e.key!=='Tab' || !m || m.style.display==='none') return;
@@ -44,6 +45,7 @@ function switchLang(lang){
   else if(currentSite){ loadData(); }
   else { loadSites(); }
   applyThemeAttr();
+  updateRefreshIndicator();   // 状态点 title 随语言重译（applyI18n 会先写回未暂停文案）
   populateVisitorSourceFilter();
 }
 var ECHARTS_OK = (typeof echarts !== 'undefined');
@@ -59,8 +61,32 @@ var currentTheme = (function(){
 function applyThemeAttr(){
   document.documentElement.setAttribute('data-theme', currentTheme);
   var bt = document.getElementById('btnTheme');
-  if(bt) bt.textContent = currentTheme==='dark' ? t('深色') : t('浅色');
+  if(bt){
+    // 图标显示当前主题（☾ 深色 / ☀ 浅色），文案改由 title/aria-label 承载，避免按钮宽度跳动
+    bt.textContent = currentTheme==='dark' ? '☾' : '☀';
+    var label = t(currentTheme==='dark' ? '切换到浅色' : '切换到深色');
+    bt.title = label;
+    bt.setAttribute('aria-label', label);
+  }
 }
+/* 顶栏账户下拉（v1.8 收纳：用户名 / 用户管理 / 改密码 / 退出） */
+function toggleUserMenu(ev){
+  if(ev){ ev.stopPropagation(); }
+  var m = document.getElementById('userMenu');
+  if(!m) return;
+  m.style.display = (m.style.display==='block') ? 'none' : 'block';
+}
+function closeUserMenu(){
+  var m = document.getElementById('userMenu');
+  if(m && m.style.display!=='none') m.style.display='none';
+}
+document.addEventListener('click', function(e){
+  var m = document.getElementById('userMenu');
+  if(!m || m.style.display==='none') return;
+  var ua = document.getElementById('userArea');
+  if(ua && ua.contains(e.target)) return;   // 点击菜单内部不关闭（菜单项自行调用 closeUserMenu）
+  closeUserMenu();
+});
 function toggleTheme(){
   currentTheme = (currentTheme==='dark') ? 'light' : 'dark';
   localStorage.setItem('sa_theme', currentTheme);
@@ -326,17 +352,23 @@ function loadSites(){
     .catch(function(e){ setTip(t('获取站点失败：')+e); });
 }
 
+/* 窄屏（≤760px）时间范围用短标签，保证顶栏主控 + 工具条同排（v1.8） */
+var NARROW_MQ = (window.matchMedia ? window.matchMedia('(max-width:760px)') : null);
+function isNarrow(){ return !!(NARROW_MQ && NARROW_MQ.matches); }
+
 function presetOptions(){
+  var narrow = isNarrow();
+  function lab(k){ return narrow ? ts(k) : t(k); }
   var presets = [
-    {label:t('今天'), value:'today'},
-    {label:t('昨天'), value:'yesterday'},
-    {label:t('过去2天'), value:'2days'},
-    {label:t('过去7天'), value:'7days'},
-    {label:t('过去14天'), value:'14days'},
-    {label:t('过去28天'), value:'28days'},
-    {label:t('过去60天'), value:'60days'},
-    {label:t('过去90天'), value:'90days'},
-    {label:t('自定义日期范围'), value:'custom'}
+    {label:lab('今天'), value:'today'},
+    {label:lab('昨天'), value:'yesterday'},
+    {label:lab('过去2天'), value:'2days'},
+    {label:lab('过去7天'), value:'7days'},
+    {label:lab('过去14天'), value:'14days'},
+    {label:lab('过去28天'), value:'28days'},
+    {label:lab('过去60天'), value:'60days'},
+    {label:lab('过去90天'), value:'90days'},
+    {label:lab('自定义日期范围'), value:'custom'}
   ];
   var opts = '<optgroup label="'+t('预设')+'">';
   for(var i=0;i<presets.length;i++){
@@ -427,6 +459,14 @@ function onSiteChange(){
 function showCustomRangePanel(show){
   document.getElementById('customRangePanel').style.display = show ? 'inline-flex' : 'none';
 }
+/* 跨越 760px 断点时重建时间范围下拉（长/短标签切换） */
+if(NARROW_MQ){
+  var _onNarrowChange = function(){
+    safeCall(function(){ initRangeSelector(); });
+  };
+  if(NARROW_MQ.addEventListener){ NARROW_MQ.addEventListener('change', _onNarrowChange); }
+  else if(NARROW_MQ.addListener){ NARROW_MQ.addListener(_onNarrowChange); }
+}
 
 function fmtDate(d){
   var y=d.getFullYear(), m=('0'+(d.getMonth()+1)).slice(-2), day=('0'+d.getDate()).slice(-2);
@@ -494,15 +534,17 @@ function loadData(only){
 function updateRefreshIndicator(){
   var el=document.getElementById('autoRefreshIndicator');
   if(!el) return;
+  // 状态点只保留圆点（::before），文案走 title/aria-label，避免工具条出现长文字
+  var label;
   if(autoRefreshPaused){
     el.classList.add('paused');
-    el.textContent=t('已暂停');
-    el.title=t('自动刷新已暂停（关闭访客详情/弹窗后恢复）');
+    label = t('自动刷新已暂停（关闭访客详情/弹窗后恢复）');
   } else {
     el.classList.remove('paused');
-    el.textContent=t('自动刷新');
-    el.title=t('自动刷新中（查看访客详情时会自动暂停）');
+    label = t('自动刷新中（查看访客详情时会自动暂停）');
   }
+  el.title = label;
+  el.setAttribute('aria-label', label);
 }
 function setAutoRefreshPaused(paused){
   autoRefreshPaused = !!paused;
@@ -512,8 +554,15 @@ function manualRefresh(){
   var now = Date.now();
   if(now - lastRefreshAt < 2000){ return; } // 2 秒内防连点
   lastRefreshAt = now;
-  var btn=document.getElementById('btnRefresh'); if(btn){ btn.textContent=t('刷新中…'); }
-  function done(){ if(btn){ btn.textContent=t('刷新'); } }
+  var btn=document.getElementById('btnRefresh');
+  var t0=Date.now();
+  if(btn) btn.classList.add('spinning');
+  function done(){
+    if(!btn) return;
+    var left = 600 - (Date.now()-t0);   // 保证至少转 600ms，否则瞬间结束看不到反馈
+    if(left>0){ setTimeout(function(){ btn.classList.remove('spinning'); }, left); }
+    else { btn.classList.remove('spinning'); }
+  }
   if(currentTab==='realtime'){ loadRecent(true); done(); }
   else if(currentTab==='visitors'){ loadVisitors(); done(); }
   else { loadData(currentTab); done(); }
@@ -1634,8 +1683,8 @@ function fallbackCopy(txt){
   ta.select(); try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(ta);
 }
 
-applyThemeAttr();
 applyI18n();
+applyThemeAttr();
 initRangeSelector();
 
 /* ---------------- 用户管理（v1.5.0 登录鉴权） ---------------- */
@@ -1741,8 +1790,13 @@ function changeMyPwd(){
       currentUser = j.user || null;
       var ua=document.getElementById('userArea');
       if(ua) ua.style.display='inline-flex';
+      var av=document.getElementById('btnUserMenu');
+      if(av && currentUser) av.textContent = String(currentUser.username||'?').charAt(0).toUpperCase();
       var w=document.getElementById('whoami');
-      if(w && currentUser) w.textContent = currentUser.username + (currentUser.role==='admin' ? t('（管理员）') : '');
+      if(w && currentUser){
+        w.innerHTML = escapeHtml(currentUser.username)
+          + (currentUser.role==='admin' ? '<em class="role">'+escapeHtml(t('（管理员）'))+'</em>' : '');
+      }
       if(currentUser && currentUser.role!=='admin'){
         var ads=document.querySelectorAll('.adm');
         for(var k=0;k<ads.length;k++) ads[k].style.display='none';

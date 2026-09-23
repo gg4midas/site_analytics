@@ -18,6 +18,7 @@
   --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:18px;
   --chart-sm:300px; --chart-md:340px; --chart-lg:440px;
   --radius:9px; --ctrl-h:36px; --t-fast:120ms ease; --t:180ms cubic-bezier(.4,0,.2,1);
+  color-scheme:dark;   /* 原生 select 下拉 / 日期选择器 / 滚动条跟随深色 */
 }
 /* 浅色主题（保留可切换） */
 :root[data-theme="light"]{
@@ -33,6 +34,7 @@
   --track:var(--panel3);
   --code:#0d1117;
   --lead:#6a2fd0; --lead-bg:rgba(106,47,208,.10); --suspect:#c2502a; --suspect-bg:rgba(194,80,42,.08);
+  color-scheme:light;
 }
 /* === 氛围背景：深空渐变 + 极光光斑 === */
 body{position:relative;min-height:100vh}
@@ -89,10 +91,100 @@ a{color:var(--accent);text-decoration:none}
 .topbar .btn{padding:0 var(--space-4);font-size:var(--fs-base);font-weight:600}
 .nav .btn{padding:0 var(--space-3);font-size:var(--fs-base);font-weight:600}
 .topbar .custom-range{display:inline-flex;align-items:center;gap:8px}
+/* ============================================================
+   顶栏 v2：三级布局 —— 一级主控制区 / 二级图标工具条 / 三级账户收纳
+   （降低按钮数量与视觉密度：11 个可见控件 → 7 个，其中 5 个为同高图标按钮）
+   ============================================================ */
+.ctrlbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:8px;min-width:0}
+/* 分段组：把 select 与附属图标按钮拼成一个胶囊，去掉重复圆角与双边框 */
+.seg-group{display:inline-flex;align-items:center;height:var(--ctrl-h);min-width:0;
+  background:var(--panel2-glass);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  transition:border-color var(--t-fast), box-shadow var(--t-fast)}
+.seg-group:hover{border-color:var(--border2)}
+.seg-group:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
+/* 组内 select：无边框、自绘 chevron，避免原生箭头在深色下不可见 */
+.seg-group>select{appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  border:0;margin:0;height:100%;padding:0 30px 0 12px;max-width:230px;
+  background-color:transparent;color:var(--text);font-size:var(--fs-base);font-family:inherit;
+  text-overflow:ellipsis;cursor:pointer;outline:none;
+  background-repeat:no-repeat;background-position:right 11px center;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 3.6L9 1' fill='none' stroke='%238fa3bd' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")}
+.seg-group>select:hover{background-color:var(--row-hover)}
+.seg-group>select option{background:var(--panel2);color:var(--text)}
+:root[data-theme="light"] .seg-group>select option{background:#fff;color:#1f2937}
+:root[data-theme="light"] .seg-group>select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 3.6L9 1' fill='none' stroke='%236b7785' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")}
+/* 组内分隔线：区分 select 与附属动作 */
+.seg-sep{width:1px;height:18px;background:var(--border);flex:0 0 auto}
+/* 组内图标按钮：与组同高、无边框，仅 hover 给底 */
+.seg-group>.icon-btn{width:34px;height:100%;border:0;border-radius:0;background:transparent;box-shadow:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none;color:var(--faint)}
+.seg-group>.icon-btn:hover{background:var(--row-hover);color:var(--accent);border:0}
+/* 组内的自定义日期面板（就地展开，不脱离分组） */
+.seg-group>.custom-range{margin-left:0;gap:6px;padding:0 8px 0 4px;height:100%}
+.seg-group>.custom-range input[type=date]{height:24px;border:0;background:transparent;
+  padding:0 6px;font-size:12px;border-radius:6px;color:var(--text)}
+.seg-group>.custom-range input[type=date]:hover{background:var(--row-hover)}
+.seg-group>.custom-range input[type=date]:focus{border:0;box-shadow:none}
+.seg-group>.custom-range .range-sep{font-size:12px;color:var(--faint)}
+.seg-group>.custom-range .btn{height:24px;padding:0 10px;font-size:12px;border-radius:6px}
+/* 二级图标工具条：刷新 / 状态点 / 语言 / 主题 / 账户，靠右收拢 */
+.toolbar{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.tool-sep{width:1px;height:20px;background:var(--border2);margin:0 4px;flex:0 0 auto}
+.icon-btn{width:var(--ctrl-h);height:var(--ctrl-h);flex:0 0 auto;
+  display:inline-flex;align-items:center;justify-content:center;padding:0;
+  background:var(--panel2-glass);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text);font-family:inherit;font-size:15px;font-weight:400;line-height:1;cursor:pointer;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  transition:border-color var(--t-fast), color var(--t-fast), background var(--t-fast), transform var(--t-fast)}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.icon-btn:active{transform:translateY(1px)}
+.icon-btn.on{border-color:var(--accent);color:var(--accent);background:rgba(56,189,248,.12)}
+#langToggle{font-size:11px;font-weight:700;letter-spacing:.2px}
+/* 刷新中：图标旋转替代文案切换，避免按钮宽度跳动 */
+.icon-btn.spinning{pointer-events:none;animation:iconSpin .9s linear infinite}
+@keyframes iconSpin{to{transform:rotate(360deg)}}
+/* 自动刷新状态点（仅圆点 + tooltip，文字由 title 承载） */
+.toolbar .refresh-indicator{padding:0 4px;height:var(--ctrl-h);font-size:0}
+/* 三级：账户收纳（圆形头像 + 玻璃下拉） */
+.user-area{position:relative;display:inline-flex;align-items:center}
+.icon-btn.avatar{border-radius:50%;border-color:transparent;color:#06121f;font-size:12px;font-weight:700;
+  text-transform:uppercase;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  box-shadow:0 0 12px var(--glow-accent)}
+.icon-btn.avatar:hover{color:#06121f;filter:brightness(1.08);transform:translateY(-1px)}
+.menu{position:absolute;top:calc(100% + 8px);right:0;z-index:45;min-width:184px;padding:6px;
+  background:var(--panel2-glass);border:1px solid var(--border2);border-radius:12px;
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  box-shadow:0 16px 44px rgba(0,0,0,.55);animation:menuIn 150ms cubic-bezier(.4,0,.2,1)}
+@keyframes menuIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.menu-head{padding:6px 10px 9px;margin-bottom:5px;border-bottom:1px solid var(--border);
+  font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menu-head .role{color:var(--accent);font-style:normal;font-weight:400}
+.menu-item{display:block;width:100%;padding:8px 10px;background:transparent;border:0;border-radius:7px;
+  color:var(--text);font-family:inherit;font-size:13px;text-align:left;cursor:pointer;
+  transition:background var(--t-fast), color var(--t-fast)}
+.menu-item:hover{background:var(--row-hover)}
+.menu-item.danger{color:var(--down)}
+.menu-item.danger:hover{background:rgba(248,113,113,.12)}
+/* 窄屏：收起品牌文字与状态点，主控 + 工具条保持单行 */
+@media(max-width:760px){
+  .topbar{gap:10px}
+  .brand .brand-text span{display:none}
+  .brand small{display:none}
+  .toolbar .refresh-indicator{display:none}
+  .toolbar{gap:5px}
+  .ctrlbar{gap:6px}
+}
+@media(max-width:560px){
+  .topbar{gap:8px}
+  .seg-group>select{max-width:118px}
+  .seg-group>.icon-btn{width:28px}
+  .icon-btn{width:32px;height:32px}
+  .tool-sep{display:none}
+}
 /* === 导航 Tab：渐变发光下划线 === */
-.nav{display:flex;justify-content:space-between;align-items:flex-end;gap:8px;border-bottom:1px solid var(--border);margin-bottom:18px}
+.nav{display:flex;align-items:flex-end;gap:8px;border-bottom:1px solid var(--border);margin-bottom:18px}
 .nav-left{display:flex;gap:2px;flex-wrap:nowrap;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin}
-.nav-right{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:0 6px 6px 12px}
 .nav button{background:transparent;color:var(--muted);border:none;padding:11px 16px;font-size:13px;
   cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;font-weight:500;
   transition:color var(--t-fast)}

@@ -4,6 +4,8 @@ var I18N_EN = {
 '网站流量统计':'Website Analytics',
 '概览':'Overview','访客':'Visitors','内容':'Content','性能':'Performance','来源':'Sources','地域':'Geo','实时监控':'Realtime',
 '刷新':'Refresh','深色':'Dark','浅色':'Light',
+'语言':'Language','主题':'Theme','账户':'Account','时间范围':'Time range',
+'切换到浅色':'Switch to light theme','切换到深色':'Switch to dark theme',
 '+ 添加站点':'+ Add Site','应用':'Apply','至':'to',
 '用户管理':'User Management','改密码':'Change Password','退出':'Log out','（管理员）':' (Admin)',
 '普通用户':'Viewer','管理员':'Admin','启用':'Active','已停用':'Disabled','停用':'Disable',
@@ -162,6 +164,15 @@ var I18N_EN = {
 '确定重新生成「{n}」的部署令牌？\n生成后须用新代码重新嵌入该站点，旧令牌立即失效。':'Regenerate the deploy token for "{n}"?\nAfter regeneration you must re-embed the new snippet; the old token is immediately invalidated.',
 '性能数据来自真实访客浏览器测量（RUM）；指标（对齐 PageSpeed Insights 字段数据）：FCP 首次内容绘制、LCP 最大内容绘制、TTFB 首字节时间、CLS 累计布局偏移、Speed Index 速度指数，单位均为秒（CLS 无量纲）。顶部汇总卡采用 75 分位（p75，与 PSI 一致），比均值更抗极端值；下方表格按页面展示均值。颜色阈值：绿=良好 / 黄=需改进 / 红=差。Speed Index 为浏览器端按视觉完成度估算值（非 Lighthouse 逐帧计算），仅供趋势参考。聚合时已过滤大于 60 秒的异常值及大于 2 的 CLS。TTFB 不含建连/TLS/重定向（系统性偏小）。自动刷新 60 秒一次，展开访客详情/打开弹窗时自动暂停，可点右上角「刷新」手动刷新。':'Perf data is measured by real visitor browsers (RUM). Metrics (aligned with PageSpeed Insights field data): FCP First Contentful Paint, LCP Largest Contentful Paint, TTFB Time To First Byte, CLS Cumulative Layout Shift, Speed Index — all in seconds (CLS dimensionless). Top cards use the 75th percentile (p75, consistent with PSI), more robust to outliers than the mean; the table shows per-page means. Color thresholds: green=good / yellow=needs improvement / red=poor. Speed Index is a browser-estimated visual-completeness value (not Lighthouse frame-by-frame), for trend reference only. Aggregation filters outliers > 60s and CLS > 2. TTFB excludes connection/TLS/redirect (systematically low). Auto-refresh every 60s; pauses when expanding visitor details or opening a modal; click "Refresh" (top-right) to refresh manually.'
 };
+/* 窄屏短标签（v1.8 顶栏）：时间范围下拉在 ≤760px 时用短文案，保证主控与工具条同排不换行 */
+var I18N_SHORT_ZH = {'今天':'今天','昨天':'昨天','过去2天':'2天','过去7天':'7天','过去14天':'14天',
+  '过去28天':'28天','过去60天':'60天','过去90天':'90天','自定义日期范围':'自定义'};
+var I18N_SHORT_EN = {'今天':'Today','昨天':'Yest.','过去2天':'2d','过去7天':'7d','过去14天':'14d',
+  '过去28天':'28d','过去60天':'60d','过去90天':'90d','自定义日期范围':'Custom'};
+function ts(k){
+  var m = (SA_LANG==='en') ? I18N_SHORT_EN : I18N_SHORT_ZH;
+  return (m[k]!=null) ? m[k] : t(k);
+}
 function t(k, sub){
   var s = (SA_LANG==='en' && I18N_EN[k]!=null) ? I18N_EN[k] : k;
   if(sub!=null){

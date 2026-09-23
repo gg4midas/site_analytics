@@ -13,30 +13,46 @@
   <div class="topbar">
     <div class="brand">
       <div class="logo"></div>
-      <div><span data-i18n="网站流量统计">网站流量统计</span><small>Client-side Analytics</small></div>
+      <div class="brand-text"><span data-i18n="网站流量统计">网站流量统计</span><small>Client-side Analytics</small></div>
     </div>
+
+    <!-- 一级 · 主控制区：站点 + 时间范围（决定「看哪个站、哪段时间」，最高频，始终可见） -->
+    <div class="ctrlbar">
+      <div class="seg-group" data-i18n-attr="title:站点">
+        <select id="selSite" onchange="onSiteChange()"><option value="" data-i18n="加载中…">加载中…</option></select>
+        <span class="seg-sep"></span>
+        <button class="icon-btn adm" onclick="openSiteManager()" data-i18n-attr="title:站点管理" title="站点管理" aria-label="站点管理">＋</button>
+      </div>
+      <div class="seg-group" data-i18n-attr="title:时间范围">
+        <select id="selRange" onchange="onRangeChange()"></select>
+        <span id="customRangePanel" class="custom-range" style="display:none">
+          <input type="date" id="dateStart" onchange="syncCustomRange()" aria-label="开始日期">
+          <span class="range-sep" data-i18n="至">至</span>
+          <input type="date" id="dateEnd" onchange="syncCustomRange()" aria-label="结束日期">
+          <button class="btn" onclick="applyCustomRange()" data-i18n="应用">应用</button>
+        </span>
+      </div>
+    </div>
+
     <div class="spacer"></div>
-    <div class="ctrl">
-      <select id="selSite" onchange="onSiteChange()"><option value="" data-i18n="加载中…">加载中…</option></select>
-    </div>
-    <button class="btn ghost adm" onclick="openSiteManager()" data-i18n="+ 添加站点">+ 添加站点</button>
-    <div class="ctrl">
-      <select id="selRange" onchange="onRangeChange()"></select>
-      <span id="customRangePanel" class="custom-range" style="display:none">
-        <input type="date" id="dateStart" onchange="syncCustomRange()">
-        <span class="range-sep" data-i18n="至">至</span>
-        <input type="date" id="dateEnd" onchange="syncCustomRange()">
-        <button class="btn" onclick="applyCustomRange()" data-i18n="应用">应用</button>
+
+    <!-- 二级 · 图标工具条：刷新 / 自动刷新状态 / 语言 / 主题；三级 · 账户收纳进头像下拉 -->
+    <div class="toolbar">
+      <button class="icon-btn" id="btnRefresh" onclick="manualRefresh()" data-i18n-attr="title:刷新" title="刷新" aria-label="刷新">⟳</button>
+      <span id="autoRefreshIndicator" class="refresh-indicator" data-i18n-attr="title:自动刷新中（查看访客详情时会自动暂停）" title="自动刷新中"></span>
+      <span class="tool-sep"></span>
+      <button class="icon-btn" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')" data-i18n-attr="title:语言" title="语言" aria-label="语言">EN</button>
+      <button class="icon-btn" id="btnTheme" onclick="toggleTheme()" title="主题" aria-label="主题">☾</button>
+      <span id="userArea" class="user-area" style="display:none">
+        <button class="icon-btn avatar" id="btnUserMenu" onclick="toggleUserMenu(event)" data-i18n-attr="title:账户" title="账户" aria-label="账户" aria-haspopup="true"></button>
+        <div class="menu" id="userMenu" style="display:none" role="menu">
+          <div class="menu-head"><span id="whoami"></span></div>
+          <button class="menu-item adm" onclick="openUsers(); closeUserMenu();" data-i18n="用户管理">用户管理</button>
+          <button class="menu-item" onclick="changeMyPwd(); closeUserMenu();" data-i18n="改密码">改密码</button>
+          <button class="menu-item danger" onclick="closeUserMenu(); logout();" data-i18n="退出">退出</button>
+        </div>
       </span>
     </div>
-    <button class="btn ghost" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')">EN</button>
-    <button class="btn ghost" id="btnTheme" onclick="toggleTheme()">深色</button>
-    <span id="userArea" style="display:none;align-items:center;gap:8px">
-      <span id="whoami" style="color:var(--muted);font-size:13px"></span>
-      <button class="btn ghost adm" id="btnUsers" onclick="openUsers()" data-i18n="用户管理">用户管理</button>
-      <button class="btn ghost" onclick="changeMyPwd()" data-i18n="改密码">改密码</button>
-      <button class="btn ghost" onclick="logout()" data-i18n="退出">退出</button>
-    </span>
   </div>
 
   <div class="nav" id="nav">
@@ -48,10 +64,6 @@
       <button data-tab="sources" onclick="switchTab('sources')" data-i18n="来源">来源</button>
       <button data-tab="geo" onclick="switchTab('geo')" data-i18n="地域">地域</button>
       <button data-tab="realtime" onclick="switchTab('realtime')" data-i18n="实时监控">实时监控</button>
-    </div>
-    <div class="nav-right">
-      <button class="btn ghost" id="btnRefresh" onclick="manualRefresh()" title="立即刷新" data-i18n="刷新">刷新</button>
-      <span id="autoRefreshIndicator" class="refresh-indicator" title="自动刷新中（查看访客详情时会自动暂停）"></span>
     </div>
   </div>
 
