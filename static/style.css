@@ -76,8 +76,16 @@ a{color:var(--accent);text-decoration:none}
   border-radius:var(--radius);padding:7px 10px;font-size:var(--fs-base);height:var(--ctrl-h);outline:none;
   transition:border-color var(--t-fast), box-shadow var(--t-fast)}
 .ctrl select:focus,.ctrl input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
-.ctrl option{background:var(--panel2);color:var(--text)}
-:root[data-theme="light"] .ctrl option{background:#fff;color:#1f2937}
+/* === 原生下拉的 option / optgroup 必须显式上色 ============================
+   它们是 UA 绘制的元素：optgroup 若不设背景，会落在 UA 默认（白）底上，
+   而深色主题下 optgroup 文字色继承 --text(#e8f1fb) → 白底白字不可读。
+   这里统一覆盖全站 select（.ctrl / .seg-group>select / .add-row select …），
+   并让分组标题（optgroup）用同样的底/字色、仅以加粗 + 取消斜体作区分，
+   与普通选项保持视觉一致。 */
+select option,select optgroup{background:var(--panel2);color:var(--text)}
+select optgroup{font-weight:700;font-style:normal}
+:root[data-theme="light"] select option,
+:root[data-theme="light"] select optgroup{background:#fff;color:#1f2937}
 /* === 按钮：渐变主按钮 + 幽灵按钮 === */
 .btn{position:relative;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#06121f;
   border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;
@@ -111,8 +119,7 @@ a{color:var(--accent);text-decoration:none}
   background-repeat:no-repeat;background-position:right 11px center;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 3.6L9 1' fill='none' stroke='%238fa3bd' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")}
 .seg-group>select:hover{background-color:var(--row-hover)}
-.seg-group>select option{background:var(--panel2);color:var(--text)}
-:root[data-theme="light"] .seg-group>select option{background:#fff;color:#1f2937}
+/* option / optgroup 的上色见上方「原生下拉的 option / optgroup」统一规则 */
 :root[data-theme="light"] .seg-group>select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 3.6L9 1' fill='none' stroke='%236b7785' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")}
 /* 组内分隔线：区分 select 与附属动作 */
 .seg-sep{width:1px;height:18px;background:var(--border);flex:0 0 auto}
