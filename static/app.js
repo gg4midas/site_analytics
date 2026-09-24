@@ -514,8 +514,8 @@ function loadData(only){
         if(only){
           if(only==='overview') renderOverview(res.data);
           else if(only==='content') renderContent(res.data);
-          else if(only==='sources') renderSources(res.data);
-          else if(only==='geo') renderGeo(res.data);
+          // v1.8.2：「来源」页签已合并原「地域」内容，两个渲染函数必须一起调用
+          else if(only==='sources'){ renderSources(res.data); renderGeo(res.data); }
           else if(only==='perf') renderPerf(res.data);
           return;
         }
@@ -1423,7 +1423,8 @@ function switchTab(tab){
   for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-tab')===tab);
   var secs=document.querySelectorAll('[id^="tab-"]');
   for(var j=0;j<secs.length;j++) secs[j].style.display='none';
-  document.getElementById('tab-'+tab).style.display='block';
+  var sec=document.getElementById('tab-'+tab);
+  if(sec) sec.style.display='block';
   setTimeout(function(){ for(var k in charts){ if(charts[k]) charts[k].resize(); } }, 30);
   if(liveTimer){ clearInterval(liveTimer); liveTimer=null; }
   if(visitorTimer){ clearInterval(visitorTimer); visitorTimer=null; }

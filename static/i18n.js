@@ -3,6 +3,7 @@ var SA_LANG = (function(){ var l = localStorage.getItem('sa_lang'); return (l===
 var I18N_EN = {
 '网站流量统计':'Website Analytics',
 '概览':'Overview','访客':'Visitors','内容':'Content','性能':'Performance','来源':'Sources','地域':'Geo','实时监控':'Realtime',
+'渠道来源':'Traffic sources','地理分布':'Geography',
 '刷新':'Refresh','深色':'Dark','浅色':'Light',
 '语言':'Language','主题':'Theme','账户':'Account','时间范围':'Time range',
 '切换到浅色':'Switch to light theme','切换到深色':'Switch to dark theme',
