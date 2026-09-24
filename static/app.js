@@ -321,10 +321,13 @@ function sitePrefix(site){
   return host ? '['+host+']' : '';
 }
 // 饼图描边（浅色模式细白描边，深色模式深色描边）
+/* 饼图/环形图扇区之间的分隔描边。
+   v1.8.2：整体调细一档 —— 浅色 1px→0.5px（白线在高饱和扇区上原本显得像"框"），
+   深色 2px→1px（#0d1420 的粗缝在深底上会切出明显的楔形缺口）。 */
 function pieBorder(){
   return currentTheme==='light'
-    ? {borderColor:'#ffffff',borderWidth:1}
-    : {borderColor:'#0d1420',borderWidth:2};
+    ? {borderColor:'#ffffff',borderWidth:0.5}
+    : {borderColor:'#0d1420',borderWidth:1};
 }
 function pieLabelColor(){
   return currentTheme==='light' ? '#4a5563' : '#c9d8ec';
