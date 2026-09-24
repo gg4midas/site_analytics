@@ -200,21 +200,25 @@
     </div>
     <div class="section">
       <h2 data-i18n="地理分布">地理分布</h2>
-      <div class="grid2">
-        <div class="card">
-          <div class="ct" data-i18n="世界地图 · 独立访客热力分布">世界地图 · 独立访客热力分布</div>
-          <div id="chartMap" style="height:var(--chart-lg)"></div>
-          <div class="note" id="geoMapNote"></div>
-        </div>
+      <!-- 地图单独占满一行 -->
+      <div class="card">
+        <div class="ct" data-i18n="世界地图 · 独立访客热力分布">世界地图 · 独立访客热力分布</div>
+        <div id="chartMap" style="height:var(--chart-lg)"></div>
+        <div class="note" id="geoMapNote"></div>
+      </div>
+    </div>
+    <div class="section">
+      <!-- 数据两列并排：国家排行 | 国家 → 城市明细 -->
+      <div class="grid2b">
         <div class="card">
           <div class="ct" data-i18n="国家 / 地区排行（按独立访客）">国家 / 地区排行（按独立访客）</div>
           <table id="tblCountries"></table>
         </div>
+        <div class="card">
+          <div class="ct" data-i18n="国家 → 城市明细">国家 → 城市明细</div>
+          <div id="geoTree"></div>
+        </div>
       </div>
-    </div>
-    <div class="section card">
-      <div class="ct" data-i18n="国家 → 城市明细">国家 → 城市明细</div>
-      <div id="geoTree"></div>
     </div>
   </section>
 
