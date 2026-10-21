@@ -18,7 +18,7 @@
 - 公开上报端点（/api/event，CORS 开放）；看板与查询接口账号登录鉴权（admin / viewer 权限分级）
 - 部署令牌（可选）：每站点独立令牌由面板「添加站点」自动生成并注入埋点代码，服务端落库前校验；老站点可在面板「重新生成令牌」启用。也支持全局兜底令牌 SA_DEPLOY_KEY / --deploy-key 与严格模式 --require-key。
 - 自动剔除 webdriver / 已知爬虫 UA
-- 反向代理下通过 X-Forwarded-For / X-Real-IP 还原真实访客 IP
+- 反向代理下通过 X-Forwarded-For / X-Real-IP 还原真实访客 IP（仅采信可信代理发来的头，且取 XFF 最右一跳，防伪造）
 """
 import os
 import re
@@ -67,7 +67,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.8.3"
+VERSION = "1.8.4"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -86,6 +86,58 @@ _USERNAME_RE = re.compile(r'^[\w\-]{2,32}$', re.UNICODE)  # 用户名：2-32 位
 _AUTH_RATE = {}             # ip -> [次数, 窗口起点]；登录/注册限流，防暴力枚举
 _AUTH_RATE_LIMIT = 10       # 每 _AUTH_RATE_WINDOW 秒内每 IP 最多尝试次数
 _AUTH_RATE_WINDOW = 300     # 限流窗口（秒）
+
+# ======================== 可信反向代理（P0：防客户端伪造 X-Forwarded-For）=======================
+# 背景：客户端可以自己发送 X-Forwarded-For。nginx 的 $proxy_add_x_forwarded_for 会把请求头
+# **追加**成「客户端伪造值, 真实对端 IP」——伪造值落在最左。旧实现取 split(',')[0]，
+# 拿到的正是客户端可控的那一段，后果有三：
+#   ① 地域 / ISP 统计可被任意污染（本工具的核心卖点）
+#   ② 机房自动屏蔽判定（is_data_center_isp → block_visitor）可被操纵
+#   ③ 登录/注册限流按 client_ip() 计数 → 轮换该头即可无限次爆破口令（已端到端复现）
+#
+# 现在的规则：
+#   1) 只有 TCP 对端在可信代理列表内，才采信转发头；否则一律用对端 IP（防伪造）。
+#   2) 采信时取 X-Forwarded-For 的**最右一跳**（反代自己追加的那段 = 真实客户端 IP），不是最左。
+#   3) 可信代理默认 = loopback（应用只监听 127.0.0.1、同机 nginx 反代 → 对端恒为 loopback）。
+#      反代在其他主机时用环境变量 SA_TRUSTED_PROXIES 指定（逗号分隔，支持 CIDR）；
+#      显式设为空字符串 = 不信任任何代理，只用 TCP 对端 IP。
+TRUSTED_PROXY_ENV = 'SA_TRUSTED_PROXIES'
+_LOOPBACK_IPS = ('127.0.0.1', '::1')
+
+
+def _load_trusted_proxies():
+    """解析可信代理列表。返回 (exact:set, nets:list, configured:bool)。
+    未设置环境变量 → 默认信任 loopback；显式设置为空 → 谁都不信。"""
+    raw = os.environ.get(TRUSTED_PROXY_ENV)
+    if raw is None:
+        return set(_LOOPBACK_IPS), [], False
+    exact, nets = set(), []
+    for item in raw.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            if '/' in item:
+                nets.append(ipaddress.ip_network(item, strict=False))
+            else:
+                exact.add(str(ipaddress.ip_address(item)))
+        except ValueError:
+            exact.add(item)   # 非法值退化为字符串精确匹配
+    return exact, nets, True
+
+
+def _ip_in_trusted(ip, exact, nets):
+    """ip 是否落在可信代理集合内。"""
+    if ip in exact:
+        return True
+    for net in nets:
+        try:
+            if ipaddress.ip_address(ip) in net:
+                return True
+        except ValueError:
+            continue
+    return False
+
 # GeoIP 数据库（GeoLite2-City.mmdb，需自行下载；缺失则地理定位自动禁用）
 DEFAULT_GEO_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip', 'GeoLite2-City.mmdb')
 # ASN 数据库（GeoLite2-ASN.mmdb，用于解析访客运营商/ISP；缺失则运营商识别自动禁用）
@@ -2696,6 +2748,9 @@ class Handler(BaseHTTPRequestHandler):
     deploy_key = ''      # 运行时由 main() 设为环境变量 SA_DEPLOY_KEY 的值（全局兜底令牌）
     require_key = False  # 运行时由 main() 设为环境变量 SA_REQUIRE_KEY == '1'（严格模式）
     www_root = None
+    # 可信代理集合 (exact:set, nets:list, configured:bool)；运行时由 main() 按 SA_TRUSTED_PROXIES 设定
+    trusted_proxies = (set(_LOOPBACK_IPS), [], False)
+    _untrusted_proxy_warned = set()   # 已告警过的非可信对端，避免刷屏
 
     def _accepts_gzip(self):
         """v1.7.1：客户端是否接受 gzip（HEAD 请求不压缩，避免 Content-Length 语义混乱）。"""
@@ -2875,15 +2930,40 @@ class Handler(BaseHTTPRequestHandler):
             return hmac.compare_digest(_id, Handler.deploy_key)
         return False
 
+    def _warn_untrusted_proxy(self, peer):
+        """对端不在可信代理列表却带了转发头：忽略之，并提示正确配置（避免统计/限流被伪造）。"""
+        seen = Handler._untrusted_proxy_warned
+        if peer in seen or len(seen) >= 50:
+            return
+        seen.add(peer)
+        sys.stderr.write(
+            '[warn] 收到来自 %s 的转发头，但该对端不在可信代理列表中，已忽略（改用对端 IP）。'
+            '若你的反向代理在别的机器上，请设置环境变量 %s=<反代IP或CIDR>。\n'
+            % (peer, TRUSTED_PROXY_ENV))
+
     def client_ip(self):
-        """优先取反向代理透传的真实访客 IP（X-Forwarded-For / X-Real-IP）。"""
+        """真实访客 IP（安全规则见文件头「可信反向代理」说明）。
+
+        ① 只有 TCP 对端在可信代理列表内，才采信 X-Forwarded-For / X-Real-IP；否则一律用对端 IP
+           —— 客户端可自行伪造该头，不能让它影响统计、屏蔽判定与登录限流。
+        ② 采信时取 X-Forwarded-For 的**最右一跳**：反代（$proxy_add_x_forwarded_for）追加在
+           末尾的那一段才是真实客户端 IP；最左那段是客户端自己塞进去的。
+        """
+        peer = self.client_address[0]
+        exact, nets, _configured = Handler.trusted_proxies
+        if not _ip_in_trusted(peer, exact, nets):
+            if self.headers.get('X-Forwarded-For') or self.headers.get('X-Real-IP'):
+                self._warn_untrusted_proxy(peer)
+            return peer
         xff = self.headers.get('X-Forwarded-For', '')
         if xff:
-            return xff.split(',')[0].strip()
-        xri = self.headers.get('X-Real-IP', '')
+            parts = [p.strip() for p in xff.split(',') if p.strip()]
+            if parts:
+                return parts[-1]     # 最右 = 反代追加的真实客户端 IP
+        xri = self.headers.get('X-Real-IP', '').strip()
         if xri:
-            return xri.strip()
-        return self.client_address[0]
+            return xri
+        return peer
 
     def do_OPTIONS(self):
         # P0-F：仅公开上报端点 /api/event 需要跨域预检放行；其余路径不返回 ACAO，避免数据被第三方网页跨域读取
@@ -3527,6 +3607,15 @@ def main():
     Handler.require_key = bool(args.require_key) or REQUIRE_KEY
     Handler.www_root = os.path.dirname(os.path.abspath(__file__))
     Handler.timeout = 15  # P0-3：读/连接超时，断掉慢客户端，防 slowloris 拖住线程池
+    # 可信反向代理（防伪造 X-Forwarded-For）：未设 SA_TRUSTED_PROXIES 时默认只信任 loopback
+    Handler.trusted_proxies = _load_trusted_proxies()
+    _tp_exact, _tp_nets, _tp_configured = Handler.trusted_proxies
+    _tp_desc = ','.join(sorted(_tp_exact)) or '(空)'
+    if _tp_nets:
+        _tp_desc += ' + %d 条 CIDR' % len(_tp_nets)
+    sys.stderr.write('[info] 可信代理列表 = %s%s\n' % (
+        _tp_desc,
+        '' if _tp_configured else '（默认 loopback；反代在其他主机请设 %s）' % TRUSTED_PROXY_ENV))
 
     try:
         httpd = ThreadingHTTPServer((args.host, args.port), Handler)
