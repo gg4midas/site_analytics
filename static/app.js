@@ -872,11 +872,9 @@ function buildVisitorRow(v, i){
   var isp = v.isp ? '<span class="isp-tag" title="'+escapeHtml(v.isp)+'">'+escapeHtml(v.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
   var ref = v.referer ? '<span class="ref" title="'+escapeHtml(v.referer)+'">'+escapeHtml(hostOf(v.referer))+'</span>' : '<span style="color:var(--faint)">'+t('直接访问')+'</span>';
   // P0-XSS：visitor 是不透明标识符，但会被拼进 **双引号** HTML 属性（onclick）。
-  // 正确做法分两层且顺序不能反（HTML 实体解码发生在 JS 解析之前）：
-  //   ① 先按 JS 字符串字面量转义（反斜杠、单引号）
-  //   ② 再按 HTML 属性转义（& < > " '）—— 攻击者塞的 " 因此无法破壳
-  var vid = (v.visitor||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-  var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+escapeHtml(vid)+'\')"' : '';
+  // 用 attrJsArg() 做两层转义（JS 字符串转义 → HTML 属性转义），顺序不能反。
+  var vid = attrJsArg(v.visitor);
+  var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+vid+'\')"' : '';
   var suspect = !!v.suspicious;
   var suspectBadge = '';
   if(suspect){
@@ -980,7 +978,7 @@ function renderBlocked(){
   var h='';
   for(var i=0;i<rows.length;i++){
     var b=rows[i];
-    var vidEsc=(b.visitor||'').replace(/'/g,"\\'");
+    var vidEsc=attrJsArg(b.visitor);
     var when=b.created?fmtTs(b.created):'';
     h+='<div class="blocked-item"><div class="bi-main">'+
       '<div class="mono">'+shortId(b.visitor)+(b.site?(' · '+escapeHtml(b.site)):'')+'</div>'+
@@ -1031,8 +1029,6 @@ function loadRecent(isLive){
           var ref = r.referer ? '<span class="ref" title="'+escapeHtml(r.referer)+'">'+escapeHtml(hostOf(r.referer))+'</span>' : '<span class="ref" style="color:var(--faint)">'+t('直接访问')+'</span>';
           var region = (r.cc || r.country) ? escapeHtml(countryName(r.cc, r.country)) : '<span style="color:var(--faint)">—</span>';
           var risp = r.isp ? '<span class="isp-tag" title="'+escapeHtml(r.isp)+'">'+escapeHtml(r.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
-          var rvid=(r.visitor||'').replace(/'/g,"\\'");
-          var rsite=(r.site||'').replace(/'/g,"\\'");
           var rSuspect = '';
           if(r.suspicious){
             var rst = r.suspect_type || '';
@@ -1289,6 +1285,14 @@ function toggleGeo(idx){
 function hostOf(u){ try{ return new URL(u).hostname; }catch(e){ return u; } }
 // 访客/会话标识符展示：必须转义 —— 它是外部上报进来的任意字符串（P0-XSS）
 function shortId(s){ s=s||''; return escapeHtml(s.length>10 ? s.substring(0,6)+'…' : s); }
+
+// P0-XSS：把外部可控的标识符安全地嵌进 **双引号** HTML 属性中的 JS 字符串参数。
+// 两层转义且顺序不可反 —— HTML 实体解码发生在 JS 解析之前：
+//   ① JS 字符串字面量转义（反斜杠、单引号）
+//   ② HTML 属性转义（& < > " '）—— 攻击者塞的 " 因此无法破壳
+function attrJsArg(s){
+  return escapeHtml((s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+}
 function fullUrl(site, path){
   if(!site) return '';
   var p = path || '/';
