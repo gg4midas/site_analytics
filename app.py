@@ -67,7 +67,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -147,6 +147,12 @@ DEFAULT_ASN_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'geoip
 _PERF_TIME_KEYS = {'fcp', 'lcp', 'ttfb', 'speed_index'}
 _PERF_MAX_TIME = 60.0   # 时间类指标超过 60 秒视为异常，不计入聚合
 _PERF_MAX_CLS = 2.0     # CLS 超过 2 视为异常
+
+# P0-XSS：visitor / session 是不透明标识符，但前端会把它们拼进 **HTML 属性**（onclick）与文本。
+# 这里把字符集收敛到「URL 非保留字符」，从源头消除注入载荷 —— 真实 tracker 只生成 base36
+# （tracker.js 的 uid() = Date.now().toString(36) + Math.random().toString(36)），完全不受影响。
+# 历史上已入库的脏 ID 不追溯清洗（只影响展示，展示侧已做转义）。
+_ID_UNSAFE_RE = re.compile(r'[^A-Za-z0-9._~-]')
 
 def _normalize_perf(k, v):
     """把 tracker 上报的性能指标归一化为秒并过滤极端异常值。返回归一化后的值或 None。"""
@@ -1032,9 +1038,13 @@ class StatEngine(object):
             visitor = (ev.get('visitor') or '').strip()
             if not visitor or len(visitor) > 200:   # P1-5：访客标识长度上限
                 return False
+            visitor = _ID_UNSAFE_RE.sub('', visitor)   # P0-XSS：收敛字符集，杜绝属性/脚本注入载荷
+            if not visitor:
+                return False
             session = (ev.get('session') or visitor)
             if len(session) > 200:   # P1-5：会话标识长度上限
                 session = session[:200]
+            session = _ID_UNSAFE_RE.sub('', session) or visitor   # P0-XSS
             etype = ev.get('type') or 'pageview'
             if etype not in ('pageview', 'pagehide', 'perf'):
                 return False

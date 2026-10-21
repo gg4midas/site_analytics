@@ -340,7 +340,7 @@ function loadSites(){
       safeCall(function(){
         if(res.status && res.sites && res.sites.length){
           var opts='';
-          for(var i=0;i<res.sites.length;i++) opts+='<option value="'+res.sites[i]+'">'+res.sites[i]+'</option>';
+          for(var i=0;i<res.sites.length;i++){ var sn=escapeHtml(res.sites[i]); opts+='<option value="'+sn+'">'+sn+'</option>'; }
           document.getElementById('selSite').innerHTML = opts;
           currentSite = res.sites[0];
           initRangeSelector();
@@ -871,8 +871,12 @@ function buildVisitorRow(v, i){
   var region = (v.cc || v.country) ? escapeHtml(countryName(v.cc, v.country)) : '<span style="color:var(--faint)">—</span>';
   var isp = v.isp ? '<span class="isp-tag" title="'+escapeHtml(v.isp)+'">'+escapeHtml(v.isp)+'</span>' : '<span style="color:var(--faint)">—</span>';
   var ref = v.referer ? '<span class="ref" title="'+escapeHtml(v.referer)+'">'+escapeHtml(hostOf(v.referer))+'</span>' : '<span style="color:var(--faint)">'+t('直接访问')+'</span>';
-  var vid = (v.visitor||'').replace(/'/g,"\\'");
-  var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+vid+'\')"' : '';
+  // P0-XSS：visitor 是不透明标识符，但会被拼进 **双引号** HTML 属性（onclick）。
+  // 正确做法分两层且顺序不能反（HTML 实体解码发生在 JS 解析之前）：
+  //   ① 先按 JS 字符串字面量转义（反斜杠、单引号）
+  //   ② 再按 HTML 属性转义（& < > " '）—— 攻击者塞的 " 因此无法破壳
+  var vid = (v.visitor||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  var click = hasActions ? 'onclick="toggleVisitor('+i+',\''+escapeHtml(vid)+'\')"' : '';
   var suspect = !!v.suspicious;
   var suspectBadge = '';
   if(suspect){
@@ -1283,7 +1287,8 @@ function toggleGeo(idx){
 }
 
 function hostOf(u){ try{ return new URL(u).hostname; }catch(e){ return u; } }
-function shortId(s){ s=s||''; return s.length>10 ? s.substring(0,6)+'…' : s; }
+// 访客/会话标识符展示：必须转义 —— 它是外部上报进来的任意字符串（P0-XSS）
+function shortId(s){ s=s||''; return escapeHtml(s.length>10 ? s.substring(0,6)+'…' : s); }
 function fullUrl(site, path){
   if(!site) return '';
   var p = path || '/';
