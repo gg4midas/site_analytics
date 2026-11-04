@@ -251,11 +251,40 @@ Key lines in the unit file (default example):
 
 ```
 WorkingDirectory=/opt/site_analytics
+User=site_analytics
+Group=site_analytics
 ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899
+ReadWritePaths=/opt/site_analytics/data
 ```
 
-> After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path.
-> For a first deployment run `python3 app.py --create-admin USER PASSWORD` once to pre-create the admin (self-registration is off by default, so this is the only way to get the first account; see "Registration & Login" if you need open sign-ups). If an old systemd unit still has a `--token` segment, you may remove it or leave it — the flag is deprecated and ignored.
+#### Running as non-root (recommended; enabled by default in the current template)
+
+The example unit runs as the dedicated low-privilege account `site_analytics` and adds
+`NoNewPrivileges` / `PrivateTmp` / `ProtectSystem=strict` / `ProtectHome` / `ReadWritePaths`.
+The app only **reads** code, static assets and GeoIP databases; the only writable path is `data/`
+(database, `debug.log` and its rotation). So grant ownership of that directory only:
+
+```bash
+sudo useradd -r -s /sbin/nologin -M -d /opt/site_analytics site_analytics
+sudo chown -R site_analytics:site_analytics /opt/site_analytics/data
+sudo cp site_analytics.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart site_analytics
+```
+
+- **Upgrading from an older root-run install**: create the user and chown `data/` with the first two
+  commands above, then replace the unit and restart. Do **not** chown anything outside `data/` —
+  code and static assets stay root-owned and read-only for the app, so a `root`-run `sa-console.sh`
+  self-update can still overwrite them.
+- The hardening block needs **systemd >= 232** (`ProtectSystem=strict` / `ReadWritePaths` /
+  `ProtectClock`). CentOS 7 ships 219: remove the whole hardening block and keep only `User`/`Group`.
+  `StandardOutput=append:` additionally needs systemd >= 240 — use `StandardOutput=journal` below that.
+- Rollback: restore the backed-up unit, `daemon-reload`, then `restart`.
+- Verify: `systemctl show site_analytics -p User -p ProtectSystem -p NoNewPrivileges`,
+  `ps -o user,group,cmd -C python3`, plus the console health check.
+
+> After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path (including `ReadWritePaths`).
+> For a first deployment run `python3 app.py --create-admin USER PASSWORD` once to pre-create the admin (self-registration is off by default, so this is the only way to get the first account; see "Registration & Login" if you need open sign-ups). If an old systemd unit still has a `--token` segment, you may remove it or leave it — the flag is deprecated and ignored; the template no longer writes it.
 
 ### 3) Reverse proxy (generic, not bound to any panel)
 

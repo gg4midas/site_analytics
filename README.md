@@ -254,11 +254,38 @@ sudo systemctl enable --now site_analytics
 
 ```
 WorkingDirectory=/opt/site_analytics
+User=site_analytics
+Group=site_analytics
 ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899
+ReadWritePaths=/opt/site_analytics/data
 ```
 
-> 把代码放到 `/opt/site_analytics` 后，将上面的 `/opt/site_analytics` 改成你的实际路径。
-> 首次部署先执行一次 `python3 app.py --create-admin 用户名 密码` 预建管理员（自助注册默认关闭，这是唯一的建号方式；确需开放自助注册见「注册与登录」）。旧版本 systemd 单元里若有 `--token` 段，删除或保留均可（该参数已废弃、被忽略）。
+#### 以非 root 运行（推荐，当前模板默认启用）
+
+示例单元默认用专用低权限账户 `site_analytics` 运行，并加了 `NoNewPrivileges` / `PrivateTmp` /
+`ProtectSystem=strict` / `ProtectHome` / `ReadWritePaths` 等加固。应用**只读**代码、静态资源与 GeoIP 库，
+唯一需要写入的是 `data/`（数据库、`debug.log` 及轮转文件），因此只需给该目录授权：
+
+```bash
+sudo useradd -r -s /sbin/nologin -M -d /opt/site_analytics site_analytics
+sudo chown -R site_analytics:site_analytics /opt/site_analytics/data
+sudo cp site_analytics.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart site_analytics
+```
+
+- **从旧版（root 运行）升级**：先按上面前两条建用户并改 `data/` 属主，再替换单元文件并重启。
+  `data/` 之外不要 chown —— 代码与静态资源保持 root 属主、app 只读即可，这样 `root` 手动执行
+  `sa-console.sh` 自更新覆盖代码时不受影响。
+- 进程加固段需要 **systemd ≥ 232**（`ProtectSystem=strict` / `ReadWritePaths` / `ProtectClock`）。
+  CentOS 7 自带的 219 不支持，请删掉模板里「进程加固」以下整段，只保留 `User`/`Group` 降权；
+  `StandardOutput=append:` 还需 systemd ≥ 240，更低版本改成 `StandardOutput=journal`。
+- 回滚：把备份的旧单元放回 `/etc/systemd/system/`，`daemon-reload` 后 `restart`。
+- 验证：`systemctl show site_analytics -p User -p ProtectSystem -p NoNewPrivileges`、
+  `ps -o user,group,cmd -C python3`，以及控制台的健康检查。
+
+> 把代码放到 `/opt/site_analytics` 后，将上面的 `/opt/site_analytics` 改成你的实际路径（含 `ReadWritePaths`）。
+> 首次部署先执行一次 `python3 app.py --create-admin 用户名 密码` 预建管理员（自助注册默认关闭，这是唯一的建号方式；确需开放自助注册见「注册与登录」）。旧版本 systemd 单元里若有 `--token` 段，删除或保留均可（该参数已废弃、被忽略；模板已不再写入）。
 
 ### 3) 反向代理（通用，不绑定任何面板）
 

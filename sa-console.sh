@@ -129,8 +129,10 @@ wait_ready() {
   while [ "$waited" -lt 30 ]; do
     if port_listening "$p"; then return 0; fi
     if command -v curl >/dev/null 2>&1; then
-      code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
-      if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then return 0; fi
+      # 探针用 /login（恒定 200）：根路径 / 对未登录请求返回 302 -> /login，
+      # 只认 2xx 会把正常服务误判成「未就绪」。2xx/3xx 都代表应用已能应答。
+      code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/login" 2>/dev/null)
+      if [ -n "$code" ] && { [ "${code:0:1}" = "2" ] || [ "${code:0:1}" = "3" ]; }; then return 0; fi
     fi
     sleep 1; waited=$((waited+1))
   done
@@ -187,8 +189,8 @@ do_status() {
   if port_listening "$p"; then
     echo "端口监听 : ${host}:${p} 已监听"
   elif command -v curl >/dev/null 2>&1; then
-    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
-    if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then
+    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/login" 2>/dev/null)
+    if [ -n "$code" ] && { [ "${code:0:1}" = "2" ] || [ "${code:0:1}" = "3" ]; }; then
       echo "端口监听 : ${host}:${p} 已监听"
     else
       echo "端口监听 : ${host}:${p} 未监听"
@@ -219,11 +221,12 @@ do_health() {
   if [ -n "$pids" ]; then echo "进程     : 运行中 (PID: $pids)"; else echo "进程     : 未运行"; ok=0; fi
   if port_listening "$p"; then echo "端口监听 : ${host}:${p} 已监听"; else echo "端口监听 : ${host}:${p} 未监听（若已设反向代理，应用仍需在本机该端口监听，代理只是转发，不会替应用监听）"; ok=0; fi
   if command -v curl >/dev/null 2>&1; then
-    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/" 2>/dev/null)
-    if [ "${code:0:1}" = "2" ] && [ -n "$code" ]; then
-      echo "HTTP 探针 : http://127.0.0.1:${p}/ 返回 $code（正常；直连本机应用，不受反向代理影响）"
+    # 用 /login 作探针：/ 对未登录请求固定返回 302，只认 2xx 会让健康检查永远报「异常」。
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${p}/login" 2>/dev/null)
+    if [ -n "$code" ] && { [ "${code:0:1}" = "2" ] || [ "${code:0:1}" = "3" ]; }; then
+      echo "HTTP 探针 : http://127.0.0.1:${p}/login 返回 $code（正常；直连本机应用，不受反向代理影响）"
     else
-      echo "HTTP 探针 : http://127.0.0.1:${p}/ 返回『${code:-无响应}』（异常）"
+      echo "HTTP 探针 : http://127.0.0.1:${p}/login 返回『${code:-无响应}』（异常）"
       ok=0
     fi
   else

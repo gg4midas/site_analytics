@@ -5,11 +5,37 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/site_analytics
-ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899 --token 你的令牌
+
+# 以专用低权限账户运行（首次部署先建用户，见 README「以非 root 运行」）：
+#   useradd -r -s /sbin/nologin -M -d /opt/site_analytics site_analytics
+#   chown -R site_analytics:site_analytics /opt/site_analytics/data
+User=site_analytics
+Group=site_analytics
+ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 8899
 Restart=always
 RestartSec=3
 StandardOutput=append:/opt/site_analytics/data/app.log
 StandardError=append:/opt/site_analytics/data/app.log
+
+# ---- 进程加固（需要 systemd >= 232；生产实测 252）----
+# CentOS 7 自带 systemd 219 不支持 ProtectSystem=strict / ReadWritePaths / ProtectClock，
+# 在那种系统上请删掉下面整段，只保留上面的 User/Group 降权。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# 应用只读代码、静态资源与 GeoIP 库；唯一需要写入的是数据目录（DB / 日志 / 日志轮转）。
+# 注意 tar 自更新由 root 手动执行，在服务命名空间之外，不受此处只读限制影响。
+ReadWritePaths=/opt/site_analytics/data
+# 监听端口 > 1024，不需要任何 capability。
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
