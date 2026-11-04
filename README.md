@@ -136,7 +136,10 @@ git clone https://gitee.com/operations-go_0/site_analytics.git
 # 2. 启动（默认监听 127.0.0.1:8899，不依赖任何第三方库）
 python3 app.py
 
-# 3. 浏览器打开面板，注册 / 登录后使用
+# 3. 建管理员账号（自助注册默认关闭，这是唯一的引导方式）
+python3 app.py --create-admin admin 你的密码
+
+# 4. 浏览器打开面板登录
 #    http://localhost:8899/    （未登录会自动跳转到 /login 登录页）
 ```
 
@@ -154,7 +157,7 @@ python3 app.py
 |------|--------|------|
 | `--host` | `127.0.0.1` | 监听地址。生产建议保持 `127.0.0.1`，由反向代理对外暴露；若直接暴露公网可设为 `0.0.0.0`（不推荐）。 |
 | `--port` | `8899` | 监听端口。 |
-| `--create-admin 用户名 密码` | 无 | 以管理员身份创建账户后退出（无头引导）。首个通过注册页注册的用户自动成为管理员；此参数适合脚本化部署预建账号。 |
+| `--create-admin 用户名 密码` | 无 | 以管理员身份创建账户后退出（无头引导）。**这是首次部署唯一的建号方式**（自助注册默认关闭），适合 systemd / 脚本化部署。 |
 | `--data-dir` | `./data` | 数据存储目录（放 `events.db`、日志）。可指向其它磁盘/挂载点。 |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP 城市库路径。文件不存在时地域功能自动禁用。 |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN 库路径，用于识别访客运营商。 |
@@ -180,9 +183,31 @@ v1.5.0 起面板内置账号登录鉴权，**登录完全取代旧的 `?token=` 
 
 ### 注册与登录
 
-- 首次使用：浏览器打开面板 → 自动跳转 `/login` → 切到「注册」创建账户。**首个注册的账户自动成为管理员**。
-- 注册成功即自动登录；会话以 Cookie（HttpOnly）保存，有效期 7 天，过期或点击顶栏「退出」后需重新登录。
-- 也可用启动参数无头预建管理员：`python3 app.py --create-admin 用户名 密码`（创建后立即退出，适合 systemd / 脚本部署）。
+**自助注册默认关闭**（v1.8.6 起）。登录页不显示「注册」页签，`POST /api/register` 直接返回 403。
+
+- **首次使用（唯一引导方式）**：`python3 app.py --create-admin 用户名 密码` 无头预建管理员（创建后立即退出）。
+- 之后要加人：管理员登录 → 顶栏头像菜单「用户管理」→ 新建账户并指定角色。
+- 登录会话以 Cookie（HttpOnly）保存，有效期 7 天，过期或点击顶栏「退出」后需重新登录。
+
+> **为什么不默认开放注册**：库内已有用户后，新注册者拿到的是 `viewer` 角色，而 `viewer` 能读 `/api/stats`、`/api/visitors`、`/api/admin/blocked`、`/api/admin/settings` —— 也就是**全站访客明细与地域数据**。对公网可达的实例，开放注册等于「任何人填个用户名密码就能看你的流量」。
+
+#### 可选：开放自助注册（待审制）
+
+确实需要让人自助申请账号时，用环境变量开启：
+
+```bash
+SA_ALLOW_REGISTER=1 python3 app.py          # 或写进 systemd 单元 Environment=
+```
+
+开启后的行为：
+
+| 场景 | 结果 |
+|------|------|
+| 用户表**为空**时首个注册者 | 成为 `admin` 并直接登录（引导用）。**开启前请先用 `--create-admin` 建好管理员**，否则第一个来注册的人就是管理员 —— 启动时会对这种组合打印 `[warn]` |
+| 已有用户后的注册 | 建成 `viewer` + `status='disabled'`（**待审**）：不种会话、不能登录、读不到任何数据；返回 `{"status": true, "pending": true}` |
+| 管理员审核 | 「用户管理」里点「启用」即可（`POST /api/admin/user`，`action=status&status=active`） |
+
+启动日志会打印当前状态：`[info] 自助注册：已关闭` / `[info] 自助注册：已开启（新注册须管理员审核启用后才能登录）`。
 
 ### 权限分级
 
@@ -197,7 +222,7 @@ v1.5.0 起面板内置账号登录鉴权，**登录完全取代旧的 `?token=` 
 
 ### 公开端点
 
-仅以下端点无需登录：`/api/event`（埋点上报）、`/tracker.js`、`/static/*` 静态资源、`/login` 登录页及注册 / 登录 / 会话查询接口。其余接口一律需要登录，管理类接口仅限管理员。
+仅以下端点无需登录：`/api/event`（埋点上报）、`/tracker.js`、`/static/*` 静态资源、`/login` 登录页及登录 / 会话查询接口。`/api/register` 默认关闭（返回 403），仅在设了 `SA_ALLOW_REGISTER=1` 时才可用。其余接口一律需要登录，管理类接口仅限管理员。
 
 ---
 
@@ -233,7 +258,7 @@ ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 88
 ```
 
 > 把代码放到 `/opt/site_analytics` 后，将上面的 `/opt/site_analytics` 改成你的实际路径。
-> 首次部署先执行一次 `python3 app.py --create-admin 用户名 密码` 预建管理员（或启动后通过注册页创建，首个注册用户自动成为管理员）。旧版本 systemd 单元里若有 `--token` 段，删除或保留均可（该参数已废弃、被忽略）。
+> 首次部署先执行一次 `python3 app.py --create-admin 用户名 密码` 预建管理员（自助注册默认关闭，这是唯一的建号方式；确需开放自助注册见「注册与登录」）。旧版本 systemd 单元里若有 `--token` 段，删除或保留均可（该参数已废弃、被忽略）。
 
 ### 3) 反向代理（通用，不绑定任何面板）
 
@@ -503,8 +528,8 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 |------|------|------|
 | `GET  /tracker.js` | 无 | 返回埋点脚本 |
 | `POST/GET /api/event` | 无 | 接收上报事件（JSON / form / 图片 beacon） |
-| `GET  /login` | 无 | 登录 / 注册页（自包含单页） |
-| `POST /api/register` | 无 | 注册新用户（IP 限流；成功即登录种会话 Cookie；首个注册用户自动成为管理员） |
+| `GET  /login` | 无 | 登录页（自包含单页；未开 `SA_ALLOW_REGISTER` 时不渲染注册页签） |
+| `POST /api/register` | 无（默认关闭） | 注册新用户。**默认返回 403**；需 `SA_ALLOW_REGISTER=1`。开启后：空库首个注册者=admin 并种会话；其余建成 viewer + 待审（`pending: true`，不种会话）。IP 限流 |
 | `POST /api/login` | 无 | 登录（IP 限流；成功种会话 Cookie） |
 | `POST /api/logout` | 无 | 退出登录（清除会话 Cookie） |
 | `GET  /api/me` | 无 | 查询当前登录用户 `{user:{username,role}}`；未登录返回 401 |

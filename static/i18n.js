@@ -13,7 +13,7 @@ var I18N_EN = {
 '设为管理员':'Make Admin','设为普通':'Make Viewer','重置密码':'Reset Password','（当前登录）':' (current)',
 '创建用户':'Create User','普通用户（只读）':'Viewer (read-only)','暂无用户。':'No users yet.',
 '用户名（2-32 位）':'Username (2-32 chars)','密码（至少 6 位）':'Password (min 6 chars)',
-'普通用户可查看全部分析数据但不能修改任何设置；管理员拥有全部权限。首个注册的账户自动成为管理员。':'Viewers can see all analytics but cannot change anything; admins have full access. The first registered account automatically becomes an admin.',
+'普通用户可查看全部分析数据但不能修改任何设置；管理员拥有全部权限。自助注册的账号默认待审，需管理员在此启用后才能登录。':'Viewers can see all analytics but cannot change anything; admins have full access. Self-registered accounts start disabled and must be enabled here by an admin before they can sign in.',
 '操作失败：':'Operation failed: ','创建失败：':'Create failed: ','修改失败：':'Change failed: ',
 '确定删除用户「{n}」？':'Delete user "{n}"?','为 {n} 设置新密码（至少 6 位）：':'Set a new password for {n} (min 6 chars):',
 '请输入原密码：':'Current password:','请输入新密码（至少 6 位）：':'New password (min 6 chars):','密码已修改。':'Password changed.',

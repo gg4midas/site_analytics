@@ -67,7 +67,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -827,8 +827,10 @@ class StatEngine(object):
         except Exception:
             return 0
 
-    def create_user(self, username, password, role=None):
-        """创建账户。role=None 时：库内无用户则自动授予 admin（首个注册者=管理员），否则 viewer。"""
+    def create_user(self, username, password, role=None, status='active'):
+        """创建账户。role=None 时：库内无用户则自动授予 admin（首个注册者=管理员），否则 viewer。
+        status='disabled' 时建号但不启用（v1.8.6 自助注册待审）：get_session 只认 active，
+        故该账号在管理员启用前无法登录，也不会种下任何有效会话。"""
         username = (username or '').strip()
         if not username or not _USERNAME_RE.match(username):
             return False, '用户名不合法（2-32 位字母/数字/下划线/连字符/中文）'
@@ -839,11 +841,13 @@ class StatEngine(object):
                 role = 'admin' if self.count_users() == 0 else 'viewer'
             if role not in ('admin', 'viewer'):
                 role = 'viewer'
+            if status not in ('active', 'disabled'):
+                status = 'active'
             salt, h = self._pwd_hash(password)
             conn = self._conn()
             conn.execute(
                 "INSERT INTO users(username, pwd_hash, salt, role, status, created) VALUES(?,?,?,?,?,?)",
-                (username, h, salt, role, 'active', int(time.time() * 1000)))
+                (username, h, salt, role, status, int(time.time() * 1000)))
             conn.commit(); conn.close()
             return True, username
         except Exception as e:
@@ -2591,6 +2595,21 @@ class StatEngine(object):
 DEPLOY_KEY = (os.environ.get('SA_DEPLOY_KEY', '') or '').strip()
 REQUIRE_KEY = (os.environ.get('SA_REQUIRE_KEY', '0') or '0') == '1'
 
+# ---------------- 自助注册开关（v1.8.6，安全整改）----------------
+# 默认 **关闭**：/api/register 直接 403，前端登录页也不显示「注册」页签。
+# 关闭状态下的建号途径只有两条：①管理员在面板「用户管理」新建；②启动参数 `--create-admin 用户 密码`。
+#
+# 为什么默认关：注册即读。v1.5.0 起，库内已有用户后新注册者拿 viewer 角色，而 viewer 能读
+# /api/stats、/api/visitors、/api/admin/blocked、/api/admin/settings —— 也就是**全部访客明细与地域数据**。
+# 对公网可达的自托管实例，这等于「任何人填个用户名密码就能看你的全站流量」。
+#
+# 开启后（SA_ALLOW_REGISTER=1）：
+#   - 库内**无**用户时的首个注册者仍按 v1.5.0 约定成为 admin 并直接登录（引导用）；
+#   - 一旦已有用户，新注册一律建为 viewer + status='disabled'（**待审**），不种会话、不能登录，
+#     须管理员在「用户管理」里启用（action=status, status=active）后才能进。
+# 注意：开启前请先用 --create-admin 建好管理员，否则首个注册者会直接成为管理员。
+ALLOW_REGISTER = (os.environ.get('SA_ALLOW_REGISTER', '0') or '0') == '1'
+
 
 # 登录/注册页（v1.5.0）：自包含单页，双 Tab 切换；已登录访问自动跳回看板
 _LOGIN_HTML = """<!DOCTYPE html>
@@ -2651,7 +2670,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <button id="langToggle" class="lang" type="button" title="Language">EN</button>
   <h1 data-i18n="站点流量统计">站点流量统计</h1>
   <div class="sub" data-i18n="请登录后访问分析看板">请登录后访问分析看板</div>
-  <div class="tabs">
+  <div class="tabs" id="tabs">
     <button id="tab-login" class="on" type="button" data-i18n="登录">登录</button>
     <button id="tab-reg" type="button" data-i18n="注册">注册</button>
   </div>
@@ -2665,10 +2684,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
     <button class="btn" id="go" type="submit">登录</button>
   </form>
   <div class="msg" id="msg"></div>
-  <div class="hint"><span data-i18n="首个注册的用户自动成为管理员；其余用户为只查看板。">首个注册的用户自动成为管理员；其余用户为只查看板。</span><br><span data-i18n="登录会话有效期 7 天，退出登录后立即失效。">登录会话有效期 7 天，退出登录后立即失效。</span></div>
+  <div class="hint"><span id="hint-reg" data-i18n="自助注册需管理员审核启用后才能登录。">自助注册需管理员审核启用后才能登录。</span><span id="hint-closed" style="display:none" data-i18n="自助注册已关闭，请联系管理员开通账号。">自助注册已关闭，请联系管理员开通账号。</span><br><span data-i18n="登录会话有效期 7 天，退出登录后立即失效。">登录会话有效期 7 天，退出登录后立即失效。</span></div>
 </div>
 <script>
 var mode='login';
+/* 服务端注入（v1.8.6）：reg = 是否开放自助注册（SA_ALLOW_REGISTER）。下面这行会被整体替换。 */
+var SA_CONF={"reg":true};
 /* 登录页 i18n（v1.6.1）：与看板共享 sa_lang 偏好（zh 为键，en 查字典） */
 var LANG=(function(){ var l=localStorage.getItem('sa_lang'); return (l==='en')?'en':'zh'; })();
 var I18N_EN={
@@ -2681,6 +2702,9 @@ var I18N_EN={
 '密码':'Password',
 '确认密码':'Confirm password',
 '首个注册的用户自动成为管理员；其余用户为只查看板。':'The first registered user automatically becomes an admin; other users get read-only access to the dashboard.',
+'自助注册需管理员审核启用后才能登录。':'Self-service sign-ups need admin approval before they can sign in.',
+'自助注册已关闭，请联系管理员开通账号。':'Self-service registration is disabled. Please ask an administrator to create an account for you.',
+'注册成功，等待管理员审核启用后即可登录。':'Registration submitted. You can sign in once an administrator enables the account.',
 '登录会话有效期 7 天，退出登录后立即失效。':'Sessions last 7 days and are invalidated immediately after logout.',
 '请输入用户名与密码':'Please enter username and password',
 '密码至少 6 位':'Password must be at least 6 characters',
@@ -2692,10 +2716,16 @@ var ERR_EN={
 '用户名或密码错误':'Incorrect username or password',
 '尝试过于频繁，请稍后再试':'Too many attempts, please try again later',
 '用户名不合法（2-32 位字母/数字/下划线/连字符/中文）':'Invalid username (2-32 chars: letters/digits/underscore/hyphen/CJK)',
-'用户名已存在':'Username already exists'
+'用户名已存在':'Username already exists',
+'自助注册已关闭，请联系管理员开通账号。':'Self-service registration is disabled. Please ask an administrator to create an account for you.'
 };
 function t(k){ return (LANG==='en' && I18N_EN[k]!=null) ? I18N_EN[k] : k; }
 function te(s){ if(LANG!=='en'||s==null) return s; return (ERR_EN[s]!=null)?ERR_EN[s]:s; }
+function setMsg(s, ok){
+  var m=document.getElementById('msg');
+  m.style.color = ok ? '#38bdf8' : '#f87171';
+  m.textContent = (s==null) ? '' : s;
+}
 function applyLoginI18n(){
   document.title = t('登录 · 站点流量统计');
   var nodes=document.querySelectorAll('[data-i18n]');
@@ -2709,42 +2739,62 @@ document.getElementById('langToggle').onclick=function(){
   applyLoginI18n();
 };
 function setMode(m){
+  if(m==='reg' && !SA_CONF.reg) m='login';   /* 注册已关闭时不允许切到注册页签 */
   mode=m;
   document.getElementById('tab-login').className = m==='login' ? 'on' : '';
   document.getElementById('tab-reg').className = m==='reg' ? 'on' : '';
   document.getElementById('go').textContent = m==='login' ? t('登录') : t('注册并进入');
-  document.getElementById('msg').textContent='';
+  setMsg('');
   document.getElementById('p').setAttribute('autocomplete', m==='login'?'current-password':'new-password');
   var show = (m==='reg');
   document.getElementById('p2').style.display = show ? '' : 'none';
   document.getElementById('lbl-p2').style.display = show ? '' : 'none';
   document.getElementById('p2').required = show;
 }
+/* v1.8.6：按服务端下发的 SA_CONF 决定是否暴露「注册」入口 */
+function applyRegAvailability(){
+  if(SA_CONF.reg){ return; }
+  var tabs=document.getElementById('tabs');
+  if(tabs){ tabs.style.display='none'; }
+  document.getElementById('hint-reg').style.display='none';
+  document.getElementById('hint-closed').style.display='';
+  setMode('login');
+}
 document.getElementById('tab-login').onclick=function(){ setMode('login'); };
 document.getElementById('tab-reg').onclick=function(){ setMode('reg'); };
 document.getElementById('f').onsubmit=function(e){
   e.preventDefault();
   var u=document.getElementById('u').value.trim(), p=document.getElementById('p').value;
-  var msg=document.getElementById('msg'), go=document.getElementById('go');
-  if(!u||!p){ msg.textContent=t('请输入用户名与密码'); return; }
-  if(p.length<6){ msg.textContent=t('密码至少 6 位'); return; }
-  if(mode==='reg' && p!==document.getElementById('p2').value){ msg.textContent=t('两次输入的密码不一致'); return; }
-  go.disabled=true; msg.textContent='';
+  var go=document.getElementById('go');
+  if(!u||!p){ setMsg(t('请输入用户名与密码')); return; }
+  if(p.length<6){ setMsg(t('密码至少 6 位')); return; }
+  if(mode==='reg' && p!==document.getElementById('p2').value){ setMsg(t('两次输入的密码不一致')); return; }
+  go.disabled=true; setMsg('');
   fetch('/api/'+(mode==='login'?'login':'register'),{
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({username:u, password:p})
-  }).then(function(r){ return r.text().then(function(t){
-      var j=null; try{ j=JSON.parse(t); }catch(e){}
+  }).then(function(r){ return r.text().then(function(raw){
+      var j=null; try{ j=JSON.parse(raw); }catch(e){}
       return {code:r.status, j:j};
     }); })
     .then(function(res){
+      /* v1.8.6 待审注册：200 但没有会话，不能跳转，回到登录页签给出提示 */
+      if(res.code===200 && res.j && res.j.pending){
+        setMode('login');
+        setMsg(t('注册成功，等待管理员审核启用后即可登录。'), true);
+        document.getElementById('p').value='';
+        document.getElementById('p2').value='';
+        go.disabled=false;
+        return;
+      }
       if(res.code===200){ location.replace('/'); return; }
-      msg.textContent=(res.j&&res.j.error)?te(res.j.error):((LANG==='en')?('Failed ('+res.code+')'):('失败 ('+res.code+')'));
+      setMsg((res.j&&res.j.error)?te(res.j.error):((LANG==='en')?('Failed ('+res.code+')'):('失败 ('+res.code+')')));
       go.disabled=false;
     })
-    .catch(function(){ msg.textContent=t('网络错误，请重试'); go.disabled=false; });
+    .catch(function(){ setMsg(t('网络错误，请重试')); go.disabled=false; });
 };
 applyLoginI18n();
+applyRegAvailability();
 // 已登录则直接进入看板
 fetch('/api/me').then(function(r){ if(r.ok) location.replace('/'); }).catch(function(){});
 </script>
@@ -3162,7 +3212,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == '/login':
-            self._send_html(_LOGIN_HTML)
+            # v1.8.6：把「是否开放自助注册」下发给前端，关闭时登录页不渲染注册页签
+            login_html = _LOGIN_HTML
+            if not ALLOW_REGISTER:
+                login_html = login_html.replace('var SA_CONF={"reg":true};',
+                                                'var SA_CONF={"reg":false};')
+            self._send_html(login_html)
             return
 
         if path in ('/api/me', '/api/me/'):
@@ -3386,7 +3441,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({'status': False, 'error': str(e)}, 500)
             return
         if path in ('/api/register', '/api/register/'):
-            # 公开注册：首个用户自动成为管理员，其余为 viewer；注册成功即登录（种下会话 cookie）
+            # v1.8.6 安全整改：默认关闭自助注册（见 ALLOW_REGISTER 注释）。
+            # 关闭后一律 403；开启后，已有用户时的注册一律建成 viewer + disabled（待审，不种会话）。
+            if not ALLOW_REGISTER:
+                self._send_json({'status': False,
+                                 'error': '自助注册已关闭，请联系管理员开通账号。'}, 403); return
             if not self._auth_rate_ok():
                 self._send_json({'status': False, 'error': '尝试过于频繁，请稍后再试'}, 429); return
             try:
@@ -3397,10 +3456,21 @@ class Handler(BaseHTTPRequestHandler):
                         body = json.loads(raw.decode('utf-8'))
                     except Exception:
                         body = {}
-                ok, info = self.engine.create_user(body.get('username', ''), body.get('password', ''))
+                first_user = (self.engine.count_users() == 0)
+                # 空库的首个注册者仍按 v1.5.0 约定成为 admin 并直接登录（引导用）；
+                # 其余一律 viewer + 待审。
+                ok, info = self.engine.create_user(
+                    body.get('username', ''), body.get('password', ''),
+                    role=('admin' if first_user else None),
+                    status=('active' if first_user else 'disabled'))
                 if not ok:
                     self._send_json({'status': False, 'error': info}, 400); return
                 u = self.engine.get_user_row(info)
+                if u['status'] != 'active':
+                    # 待审：不种会话、不写 Set-Cookie，前端须停留在登录页
+                    self._send_json({'status': True, 'pending': True,
+                                     'user': {'username': u['username'], 'role': u['role']}})
+                    return
                 resp = json.dumps({'status': True, 'user': {'username': u['username'], 'role': u['role']}}).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -3626,6 +3696,20 @@ def main():
     sys.stderr.write('[info] 可信代理列表 = %s%s\n' % (
         _tp_desc,
         '' if _tp_configured else '（默认 loopback；反代在其他主机请设 %s）' % TRUSTED_PROXY_ENV))
+    # v1.8.6：自助注册状态
+    if not ALLOW_REGISTER:
+        sys.stderr.write('[info] 自助注册：已关闭（如需开放，设 %s=1；建号请用 --create-admin '
+                         '或面板「用户管理」）\n' % 'SA_ALLOW_REGISTER')
+    else:
+        try:
+            _n_users = engine.count_users()
+        except Exception:
+            _n_users = 0
+        if _n_users == 0:
+            sys.stderr.write('[warn] 自助注册已开启，但用户表为空——首个注册者将直接成为管理员！'
+                             '请先用 --create-admin 建好管理员账号。\n')
+        else:
+            sys.stderr.write('[info] 自助注册：已开启（新注册须管理员审核启用后才能登录）\n')
 
     try:
         httpd = ThreadingHTTPServer((args.host, args.port), Handler)

@@ -133,8 +133,11 @@ git clone https://gitee.com/operations-go_0/site_analytics.git
 # 2. Start (listens on 127.0.0.1:8899 by default, no third-party libs)
 python3 app.py
 
-# 3. Open the dashboard in a browser
-#    http://localhost:8899/    (unauthenticated visits redirect to the /login page — register there; the first registered account becomes the admin)
+# 3. Create the admin account (self-registration is off by default — this is the only bootstrap path)
+python3 app.py --create-admin admin YOUR_PASSWORD
+
+# 4. Open the dashboard in a browser
+#    http://localhost:8899/    (unauthenticated visits redirect to the /login page)
 ```
 
 After the dashboard starts, embed the snippet (see "Embed the Snippet" below) into the site you want to track; data will appear automatically once visitors arrive.
@@ -151,7 +154,7 @@ All parameters are passed on the command line — there is no config file:
 |-----------|---------|-------|
 | `--host` | `127.0.0.1` | Listen address. In production keep `127.0.0.1` and expose via reverse proxy; set `0.0.0.0` to expose publicly (not recommended). |
 | `--port` | `8899` | Listen port. |
-| `--create-admin USER PASSWORD` | none | Create an admin account and exit (headless bootstrap). The first user registered via the register page automatically becomes the admin; this flag is handy for scripted deployments. |
+| `--create-admin USER PASSWORD` | none | Create an admin account and exit (headless bootstrap). **This is the only way to create the first account** (self-registration is off by default); handy for systemd / scripted deployments. |
 | `--data-dir` | `./data` | Data storage directory (holds `events.db`, logs). Can point to another disk/mount. |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP city database path. Geographic features auto-disable if the file is absent. |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN database path, used to identify the visitor's ISP. |
@@ -177,9 +180,31 @@ Since v1.5.0 the dashboard ships built-in account login, which **fully replaces 
 
 ### Registration & Login
 
-- First use: open the dashboard in a browser → you are redirected to `/login` → switch to the "Register" tab and create an account. **The first registered account automatically becomes the admin.**
-- Registration logs you in immediately; the session lives in an HttpOnly cookie, valid for 7 days. After expiry or clicking "Log out" in the top bar you must sign in again.
-- Alternatively, pre-create an admin headlessly: `python3 app.py --create-admin USER PASSWORD` (creates the account and exits; suitable for systemd / scripted deploys).
+**Self-registration is off by default** (since v1.8.6). The login page does not render a "Register" tab, and `POST /api/register` returns 403.
+
+- **First use (the only bootstrap path)**: `python3 app.py --create-admin USER PASSWORD` creates an admin headlessly and exits.
+- To add more people afterwards: sign in as admin → avatar menu → "Users & Permissions" → create an account with a role.
+- The session lives in an HttpOnly cookie, valid for 7 days. After expiry or clicking "Log out" in the top bar you must sign in again.
+
+> **Why registration is not open by default**: once the user table is non-empty, a new registrant gets the `viewer` role, and `viewer` can read `/api/stats`, `/api/visitors`, `/api/admin/blocked` and `/api/admin/settings` — i.e. **every visitor record and all geo data**. On an internet-reachable instance, open registration means "anyone who types a username and password can read your traffic".
+
+#### Optional: enable self-registration (approval required)
+
+If you really want people to apply for accounts themselves, turn it on with an env var:
+
+```bash
+SA_ALLOW_REGISTER=1 python3 app.py          # or add Environment= to the systemd unit
+```
+
+Behaviour once enabled:
+
+| Scenario | Result |
+|----------|--------|
+| First registrant while the user table is **empty** | Becomes `admin` and is signed in directly (bootstrap). **Create the admin via `--create-admin` before enabling**, otherwise whoever registers first becomes the admin — the server prints a warning on startup for this combination |
+| Registration once users exist | Created as `viewer` with `status='disabled'` (**pending**): no session issued, cannot sign in, can read nothing; the response is `{"status": true, "pending": true}` |
+| Approval | Click "Enable" under Users & Permissions (`POST /api/admin/user`, `action=status&status=active`) |
+
+Startup logs report the current state (`自助注册：已关闭` = disabled, `自助注册：已开启` = enabled with approval required).
 
 ### Roles
 
@@ -194,7 +219,7 @@ Since v1.5.0 the dashboard ships built-in account login, which **fully replaces 
 
 ### Public endpoints
 
-Only the following require no login: `/api/event` (event reporting), `/tracker.js`, `/static/*` assets, the `/login` page and the register / login / session-info APIs. Everything else requires login; admin-only APIs additionally require the admin role.
+Only the following require no login: `/api/event` (event reporting), `/tracker.js`, `/static/*` assets, the `/login` page and the login / session-info APIs. `/api/register` is disabled by default (returns 403) and only works when `SA_ALLOW_REGISTER=1` is set. Everything else requires login; admin-only APIs additionally require the admin role.
 
 ---
 
@@ -230,7 +255,7 @@ ExecStart=/usr/bin/python3 /opt/site_analytics/app.py --host 127.0.0.1 --port 88
 ```
 
 > After placing the code at `/opt/site_analytics`, change `/opt/site_analytics` above to your real path.
-> For a first deployment run `python3 app.py --create-admin USER PASSWORD` once to pre-create the admin (or create it via the register page afterwards — the first registered account becomes the admin). If an old systemd unit still has a `--token` segment, you may remove it or leave it — the flag is deprecated and ignored.
+> For a first deployment run `python3 app.py --create-admin USER PASSWORD` once to pre-create the admin (self-registration is off by default, so this is the only way to get the first account; see "Registration & Login" if you need open sign-ups). If an old systemd unit still has a `--token` segment, you may remove it or leave it — the flag is deprecated and ignored.
 
 ### 3) Reverse proxy (generic, not bound to any panel)
 
@@ -485,8 +510,8 @@ Geographic distribution depends on the MaxMind GeoLite2 database and is **disabl
 |----------|------|-------|
 | `GET  /tracker.js` | none | Returns the tracking script |
 | `POST/GET /api/event` | none | Receives reported events (JSON / form / image beacon) |
-| `GET  /login` | none | Self-contained login / register page |
-| `POST /api/register` | none | Register a new user (IP rate-limited; auto-login via session cookie on success; the first registered account becomes the admin) |
+| `GET  /login` | none | Self-contained login page (register tab hidden unless `SA_ALLOW_REGISTER=1`) |
+| `POST /api/register` | none (disabled by default) | Register a new user. **Returns 403 by default**; requires `SA_ALLOW_REGISTER=1`. When enabled: the first registrant on an empty DB becomes admin and gets a session; everyone else is created as viewer with pending approval (`pending: true`, no session). IP rate-limited |
 | `POST /api/login` | none | Log in (IP rate-limited; sets the session cookie on success) |
 | `POST /api/logout` | none | Log out (clears the session cookie) |
 | `GET  /api/me` | none | Current user `{user:{username,role}}`; 401 when not signed in |
