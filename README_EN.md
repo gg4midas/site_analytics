@@ -302,7 +302,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -311,7 +311,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         client_max_body_size 256k;       # reports are mostly sendBeacon/fetch, relax size limit
     }
@@ -321,7 +321,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # Since v1.5.0 the dashboard has built-in account login (unauthenticated visits
@@ -360,9 +360,16 @@ RemoteIPHeader   X-Forwarded-For
 Geographic distribution and accurate source stats depend on the visitor's real IP. Behind a reverse proxy, the back end by default sees `127.0.0.1` as the source IP, so the proxy **must** carry `X-Forwarded-For` / `X-Real-IP` (all examples above include them).
 
 ```nginx
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-For $remote_addr;
 proxy_set_header X-Real-IP $remote_addr;
 ```
+
+> **Since v1.8.5 you MUST overwrite with `$remote_addr`; do not append with `$proxy_add_x_forwarded_for`.**
+> A client can forge `X-Forwarded-For`, and appending keeps that forged value in the header. The back end
+> trusts only the **right-most hop** of XFF (the real IP appended by your own proxy), which is safe only
+> when combined with overwriting. See the header comment in `nginx_bypass_auth.conf` for the full rationale.
+> If a CDN sits in front, first restore `$remote_addr` with nginx's `real_ip` module; if the proxy is not
+> on the same host, set `SA_TRUSTED_PROXIES=<proxy IP or CIDR>` on the back-end process.
 
 Internal / local IPs show as "(internal/local)" on the geo map — this is normal.
 

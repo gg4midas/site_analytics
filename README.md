@@ -304,7 +304,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -313,7 +313,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         client_max_body_size 256k;       # 上报多为 sendBeacon/fetch，放宽体积限制
     }
@@ -323,7 +323,7 @@ server {
         proxy_pass http://127.0.0.1:8899;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # v1.5.0 起面板自带账号登录（未登录自动跳 /login），一般无需再叠加认证；
@@ -362,9 +362,15 @@ RemoteIPHeader   X-Forwarded-For
 因此代理**必须**携带 `X-Forwarded-For` / `X-Real-IP`（上面各示例均已包含）。
 
 ```nginx
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-For $remote_addr;
 proxy_set_header X-Real-IP $remote_addr;
 ```
+
+> **v1.8.5 起必须用 `$remote_addr` 覆盖，不要用 `$proxy_add_x_forwarded_for` 追加**：客户端可自行伪造
+> `X-Forwarded-For`，追加式会把伪造值留在请求头里；后端只采信 XFF 的**最右一跳**（反代自己追加的那段真实 IP），
+> 两者配合才不会被绕过。完整说明见 `nginx_bypass_auth.conf` 文件头。若站点前面还有 CDN，先用 nginx
+> `real_ip` 模块把 `$remote_addr` 还原成真实客户端 IP；反代不在同机时给后端进程设置
+> `SA_TRUSTED_PROXIES=<反代IP或CIDR>`。
 
 内网 / 本地 IP 在地域图会显示为「(内网/本地)」，属正常现象。
 
