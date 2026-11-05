@@ -93,11 +93,14 @@ _FRESH_RATE_WINDOW = 10     # 限流窗口（秒）
 _FRESH_RATE_LIMIT = 3       # 每窗口每 IP 最多 fresh 次数
 
 def _env_int(name, default):
-    """环境变量读整数，非法值回退默认；下限 1 防 0/负值导致全拒绝。"""
+    """环境变量读整数：非法值或小于 1 一律回退默认。
+    误配 0/负值若钳制为 1，会把正常埋点几乎全部 429（一个页面会上报
+    pageview/pagehide/perf 多条），属静默数据丢失，故回退默认而非取下限。"""
     try:
-        return max(1, int(os.environ.get(name, str(default)) or default))
+        v = int(os.environ.get(name, str(default)) or default)
     except (ValueError, TypeError):
         return default
+    return v if v >= 1 else default
 
 _EVENT_RATE = {}                       # ip -> [次数, 窗口起点]
 _EVENT_RATE_LOCK = threading.Lock()    # ThreadingHTTPServer 多线程保护
@@ -456,6 +459,7 @@ class StatEngine(object):
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_visitor_ts ON events(visitor, ts)")
             # P1-4：覆盖主导查询 WHERE site IN(...) AND type='pageview' AND ts>=? AND ts<?，使范围走完索引
             c.execute("CREATE INDEX IF NOT EXISTS idx_events_site_type_ts ON events(site, type, ts)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_events_site_type_ts_visitor ON events(site, type, ts, visitor)")
             c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
             c.execute("CREATE TABLE IF NOT EXISTS sites(site TEXT PRIMARY KEY, label TEXT, created INTEGER, site_key TEXT)")
             # 迁移：老库可能缺少 site_key 列（每站点独立的部署令牌 / data-id）
@@ -519,6 +523,8 @@ class StatEngine(object):
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA cache_size=-64000")       # 连接级 64MB 页缓存（默认 -2000）
+            conn.execute("PRAGMA mmap_size=268435456")     # 连接级 256MB mmap 读（默认 0）
         except Exception:
             pass
         return conn
@@ -1761,6 +1767,27 @@ class StatEngine(object):
         secs = int(round((getattr(self, '_tz_offset', 8.0)) * 3600))
 
         with self._conn_cursor() as c:
+            # 被软屏蔽占比：events 完整保留被软屏蔽事件，visible_events 视图排除它们，
+            # 故差值即为被软屏蔽事件数，无需 JOIN、无需新增表。附加指标，异常降级为 0。
+            _blocked_events = _blocked_visible = _blocked_denominator = _blocked_uv = 0
+            _blocked_ratio = 0.0
+            try:
+                _blocked_denominator = c.execute(
+                    "SELECT COUNT(*) FROM events WHERE site IN (%s) AND ts>=? AND ts<?" % ph,
+                    sp + (start_ms, end_ms)).fetchone()[0] or 0
+                _blocked_visible = c.execute(
+                    "SELECT COUNT(*) FROM visible_events WHERE site IN (%s) AND ts>=? AND ts<?" % ph,
+                    sp + (start_ms, end_ms)).fetchone()[0] or 0
+                _blocked_events = _blocked_denominator - _blocked_visible
+                _blocked_uv = c.execute(
+                    "SELECT COUNT(DISTINCT e.visitor) FROM events e "
+                    "JOIN blocked_visitors b ON e.visitor=b.visitor "
+                    "WHERE e.site IN (%s) AND e.ts>=? AND e.ts<?" % ph,
+                    sp + (start_ms, end_ms)).fetchone()[0] or 0
+                _blocked_ratio = (round(_blocked_events * 100.0 / _blocked_denominator, 2)
+                                  if _blocked_denominator else 0.0)
+            except Exception as _be:
+                self._log('blocked ratio ERROR: %s' % _be)
 
             # ===== 趋势数据：按小时或按天 =====
             if granularity == 'hour':
@@ -2210,6 +2237,12 @@ class StatEngine(object):
                 'perf_by_device': perf_by_device,
                 'anomaly': anomaly,
                 'prev': prev,
+                'blocked_events': _blocked_events,
+                'blocked_visible': _blocked_visible,
+                'blocked_denominator': _blocked_denominator,
+                'blocked_uv': _blocked_uv,
+                'blocked_ratio': _blocked_ratio,
+                'blocked_asn_enabled': self.asn_enabled(),
             }
 
     def get_visitors(self, site, days=30, range_str=None, visitor_limit=200, event_limit=3000,
