@@ -92,6 +92,19 @@ _FRESH_RATE = {}            # ip -> [次数, 窗口起点]
 _FRESH_RATE_WINDOW = 10     # 限流窗口（秒）
 _FRESH_RATE_LIMIT = 3       # 每窗口每 IP 最多 fresh 次数
 
+def _env_int(name, default):
+    """环境变量读整数，非法值回退默认；下限 1 防 0/负值导致全拒绝。"""
+    try:
+        return max(1, int(os.environ.get(name, str(default)) or default))
+    except (ValueError, TypeError):
+        return default
+
+_EVENT_RATE = {}                       # ip -> [次数, 窗口起点]
+_EVENT_RATE_LOCK = threading.Lock()    # ThreadingHTTPServer 多线程保护
+_EVENT_RATE_LIMIT = _env_int('SA_EVENT_RATE_LIMIT', 600)
+_EVENT_RATE_WINDOW = _env_int('SA_EVENT_RATE_WINDOW', 60)
+_EVENT_RATE_MAX = 10000                # 字典上限，防无界增长
+
 # ======================== P1 应用层安全响应头（单点追加于 Handler.end_headers）=======================
 # CSP 必须保留 script-src/style-src 的 'unsafe-inline'：登录页 _LOGIN_HTML 有 inline <script>/<style>，
 # index.html 与 static/app.js 含大量 on*= 内联事件；去掉会拦掉登录脚本并破坏 verify_xss_e2e。
@@ -1378,7 +1391,7 @@ class StatEngine(object):
             meta = {}
             for r in conn.execute("SELECT site, label, site_key FROM sites").fetchall():
                 if r[0]:
-                    meta[r[0]] = {'label': r[1] or '', 'key': r[2] or ''}
+                    meta[r[0]] = {'label': r[1] or '', 'site_key': r[2] or ''}
             seen = set(meta.keys())
             for r in conn.execute("SELECT DISTINCT site FROM events").fetchall():
                 if r[0]:
@@ -3108,6 +3121,19 @@ class Handler(BaseHTTPRequestHandler):
         ent[0] += 1
         return ent[0] <= _FRESH_RATE_LIMIT
 
+    def _event_rate_ok(self):
+        ip = self.client_ip()
+        now = time.time()
+        with _EVENT_RATE_LOCK:
+            ent = _EVENT_RATE.get(ip)
+            if ent is None or now - ent[1] > _EVENT_RATE_WINDOW:
+                _EVENT_RATE[ip] = [1, now]
+                if len(_EVENT_RATE) > _EVENT_RATE_MAX:
+                    _EVENT_RATE.clear()
+                return True
+            ent[0] += 1
+            return ent[0] <= _EVENT_RATE_LIMIT
+
     def do_OPTIONS(self):
         # P0-F：仅公开上报端点 /api/event 需要跨域预检放行；其余路径不返回 ACAO，避免数据被第三方网页跨域读取
         path = (getattr(self, 'path', '') or '')
@@ -3169,6 +3195,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/event':
+            if not self._event_rate_ok():
+                self._send_json({'status': False, 'error': '上报过于频繁，请稍后再试'}, 429, cors='*')
+                return
             # GET 兜底（Image beacon）：参数在 query 中
             ev = {
                 'site': query.get('site', [''])[0],
@@ -3521,7 +3550,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({'status': False, 'error': '站点名不合法'}, 400); return
                 new_key = _secrets.token_urlsafe(16)
                 conn = self.engine._conn()
-                conn.execute("UPDATE sites SET site_key=? WHERE site=?", (new_key, site))
+                cur = conn.execute("UPDATE sites SET site_key=? WHERE site=?", (new_key, site))
+                if cur.rowcount == 0:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO sites(site,label,created,site_key) VALUES(?,?,?,?)",
+                        (site, '', int(datetime.now().timestamp() * 1000), new_key))
                 conn.commit(); conn.close()
                 self._send_json({'status': True, 'site': site, 'site_key': new_key})
             except Exception as e:
@@ -3672,6 +3705,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path not in ('/api/event', '/api/event/'):
             self.send_error(404); return
+        if not self._event_rate_ok():
+            self._send_json({'status': False, 'error': '上报过于频繁，请稍后再试'}, 429, cors='*')
+            return
         try:
             raw = self._read_body()
             # 支持 JSON 与 form-urlencoded
