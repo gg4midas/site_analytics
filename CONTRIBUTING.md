@@ -49,6 +49,24 @@ python3 app.py --host 127.0.0.1 --port 8899
 - [ ] 若改了面板文案，中英文均可正常显示。
 - [ ] 不提交任何密钥、真实域名、访客数据或 `.mmdb` 数据库。
 
+## 发布与维护
+
+本节约束发版顺序与 Gitee 镜像分支同步，供维护者执行发布时遵循。
+
+### 发版顺序：`sha256sums.txt` 必须进 tag 树
+
+- `sha256sums.txt` 必须在**所有代码定稿之后、`git tag` 之前**生成并 commit 进 tag 树。清单若只存在于工作树、不在 tag 提交里，tag 对应的 raw 地址会返回 404，线上升级校验将**永久降级为告警**（默认不设 `SA_REQUIRE_CHECKSUM` 时只告警继续，等于失去强制校验）。
+- 验证清单确实在 tag 树里：`git cat-file -e <tag>:sha256sums.txt` 必须成功；且清单每一行的 hex 必须与 `git show <tag>:<rel>` 的 sha256 一致。
+- 判断「发布是否漏文件」时，必须用 `git show <tag>:<file>` 取 tag 树里的文件算 sha256 再跟生产环境比对，**不能拿工作树的文件比**——工作树可能已包含尚未发版的改动。
+
+### Gitee 分支同步铁律
+
+- **禁止**把 `main` 直接推到 Gitee 的 `main`（包括 `git push gitee main`、`git push gitee main --tags`、`git push gitee main:main` 这类写法）：这会把 `README_EN.md` 推到 Gitee 的 `main`。以上仅为警示，切勿作为可执行命令复制运行。
+- 正确做法：先把 `main` 合并到 `gitee` 分支，再用 `git push gitee gitee:main` 推送；tag 单独推送，不要随分支一起推 `--tags`。
+- `gitee` 分支必须删除 `README_EN.md`，并去掉中文 `README.md` 顶部的英文链接行，否则页面会出现断链。
+
+> 背景：`sha256sums.txt` 只列运行时文件、排除文档，正是因为 Gitee 分支与 main 的 `README.md` 字节不同且缺少 `README_EN.md`；按分支打包的镜像若用全量清单会误报。详见两份 README 的「升级完整性校验」。
+
 ## 许可证
 
 本项目以 [MIT License](LICENSE) 开源。提交贡献即表示你同意以相同许可方式授权你的修改。

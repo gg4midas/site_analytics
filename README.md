@@ -95,6 +95,8 @@ site_analytics/
 │   ├── echarts.min.js      # 本地图表库（已随仓库，无需联网）
 │   ├── style.css           # 面板样式（v1.6.0 拆分自 index.html）
 │   ├── i18n.js             # 面板多语言字典与翻译函数（中/EN，偏好与登录页共享）
+│   ├── iso3166.json        # 国家/地区代码对照表
+│   ├── world_map.json      # ECharts 世界地图 GeoJSON（坐标保留 2 位小数）
 │   └── app.js              # 面板主逻辑（v1.6.0 拆分自 index.html）
 ├── start.sh                # 启动脚本（后台运行，写 run.log）
 ├── restart.sh              # 重启脚本
@@ -106,6 +108,8 @@ site_analytics/
 ```
 
 > `geoip/` 下的 `.mmdb` 数据库约 130MB，已通过 `.gitignore` 排除，不进仓库；克隆后用 `update_geoip.sh` 拉取即可。
+
+> **静态资源清理（本批）**：前端地图实际加载的始终是 `static/world_map.json`。已删除 `static/world.json`（1,010,239 B，全仓零引用，与 `world_map.json` 几何重复）；`static/world_map.json` 的坐标精度降到 **2 位小数**（1,069,687 B → 462,979 B；217 个 features / Polygon 126 / MultiPolygon 91 全部不变）。精度**不能**降到 1 位——实测会产生大量退化边与塌缩环。自更新清单只覆盖运行时文件、不含文档，详见「升级完整性校验」。
 
 ---
 
@@ -223,6 +227,45 @@ SA_ALLOW_REGISTER=1 python3 app.py          # 或写进 systemd 单元 Environme
 ### 公开端点
 
 仅以下端点无需登录：`/api/event`（埋点上报）、`/tracker.js`、`/static/*` 静态资源、`/login` 登录页及登录 / 会话查询接口。`/api/register` 默认关闭（返回 403），仅在设了 `SA_ALLOW_REGISTER=1` 时才可用。其余接口一律需要登录，管理类接口仅限管理员。
+
+---
+
+## 安全加固（v1.8.7）
+
+以下是 v1.8.7 这批应用层与运维加固的行为说明，涵盖全局安全响应头、会话 Cookie 的 `Secure` 条件、CSRF 默认兼容模式，以及后端统计缓存调整。
+
+### 应用层安全响应头
+
+所有 HTTP 响应统一在 `app.py` 的 `Handler.end_headers()` 收口追加响应头，这是唯一的注入点，覆盖全部响应类型（含 gzip 压缩、ETag `304`、`204`、`302`、`404`、`HEAD`），且不会破坏 `Content-Length`：
+
+| 响应头 | 值 |
+|--------|-----|
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-Frame-Options` | `SAMEORIGIN` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` |
+
+> **为何 CSP 保留 `'unsafe-inline'`**：登录页是服务端输出的内联 `<script>` / `<style>`；`index.html` 含 33 个 HTML `on*` 事件属性；`static/app.js` 动态拼装的 HTML 里还有 20+ 处 `on*`。去掉 `'unsafe-inline'` 会直接破坏看板渲染与交互，因此按现状保留，并非临时遗留。
+
+### 会话 Cookie 的 `Secure` 条件
+
+会话 Cookie 名仍是 `sid`。仅当满足以下任一条件时才追加 `; Secure`：可信反向代理透传了 `X-Forwarded-Proto: https`，或显式设置 `SA_SECURE_COOKIE=1`。本地纯 HTTP 直连（开发 / 内网部署）不带 `Secure`，避免登录会话在明文 HTTP 下无法写回而回归。已有的 `HttpOnly`、`Path=/`、`Max-Age` 保持不变。
+
+### CSRF 防护（默认兼容模式）
+
+对管理类写请求（`POST` / `DELETE`）按来源校验：
+
+- 缺失 `Origin` / `Referer` → **放行**（兼容老客户端、`curl`、非浏览器调用）。
+- 明确跨站的 `Origin` → 返回 `403`。
+- 设置 `SA_CSRF_STRICT=1` 切到严格模式：此时即使缺失来源头也拒绝。
+
+豁免路径：`/api/event`、`/api/login`、`/api/register`、`/api/logout`。其中 `/api/event` 必须保持任意 `Origin` 可跨域匿名上报，并返回 `Access-Control-Allow-Origin: *`（浏览器埋点所需），它**不属于** CSRF 保护范围。
+
+### 统计缓存与手动刷新（后端）
+
+- 后端统计缓存 `STATS_CACHE_TTL` 由 45 秒调整为 **90 秒**。这是**后端统计接口的缓存**，不是前端轮询 / 刷新间隔；前端自动刷新定时器（15s / 30s / 60s 三档）本批未改。
+- `GET /api/stats?fresh=1` 绕过读缓存重新聚合，但**仍写回同一个缓存 key**，并由 `_fresh_rate_ok()` 限流（每 10 秒最多 3 次），避免被频繁穿透。
+- 统计 JSON 响应新增 `Cache-Control: no-store`。
 
 ---
 
@@ -410,6 +453,18 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 - **6 健康检查**：覆盖进程 / 端口监听 / HTTP 探针（直连本机 `127.0.0.1:$PORT`，不受反向代理影响）/ 数据目录可写性。
 - **7 查看日志**：输出 `run.log` 最近 40 行。
 
+### 升级完整性校验（sha256sums.txt）
+
+「检查版本更新（升级）」在 `sa-console.sh` 的 `do_install_release()` 中增加了一套可选的完整性校验：
+
+- 新环境变量 `SA_REQUIRE_CHECKSUM=1`：找不到或非法的 `sha256sums.txt` 时**中止升级**，并打印「未解压、未停服」；**默认不设时只告警并继续**——因为历史约 37 个 tag 没有清单，硬拒绝会废掉「回滚到旧版本」的能力。
+- 校验顺序固定为：下载 → 按**首个成功下载源**推导清单 URL → 清单格式校验 → tar 条目名安全检查 → 解压 → 逐文件 sha256 校验 → 清单外文件白名单 → **全部在 `do_stop` 之前完成**（先校验、后停服）。
+- tar 条目名检查**无条件强制**，拒绝：绝对路径、`..`、反斜杠、控制字符，以及 symlink / hardlink / FIFO / 设备文件。
+- GNU tar 使用 `--no-same-owner --no-same-permissions -k`；非 GNU tar（busybox / bsdtar）降级为普通 `tar -xzf`，但解压后统一执行 `chown -R` 与 `chmod a-s`。
+- `sha256sums.txt` **只列 18 个运行时文件**：`app.py`、`index.html`、`tracker.js`、`tracker-loader.html`、`sa-console.sh`、`site_analytics.service`、`nginx_bypass_auth.conf`、`update_geoip.sh`、`make_mirror.sh`、`start.sh`、`restart.sh`、`LICENSE`、`static/app.js`、`static/echarts.min.js`、`static/i18n.js`、`static/iso3166.json`、`static/style.css`、`static/world_map.json`。文档与 `.gitignore` 被排除——因为 gitee 分支与 main 的 `README.md` 字节不同、且缺少 `README_EN.md`，按分支打包的镜像若用全量清单会误报；白名单额外允许 `static/world.json`（旧 tag 回滚需要）。
+
+> **可信边界（如实说明）**：同源归档 + 清单能防传输损坏、CDN 投毒与二级镜像投毒；但它**防不住 Release 资产本身被篡改**——那需要 GPG / minisign / Sigstore 之类的签名，本项目当前不提供，请勿据此认为资产已获签名保护。
+
 ### 国内镜像（Gitee / 自托管，可选）
 
 GitHub 的源码包实际存放在 `codeload.github.com`，该域名在国内经常被墙或超时，导致「升级 / 回滚」下载失败。控制台支持配置**镜像源**：下载与版本列表都优先走镜像。最省事的方案是用 **Gitee** 做镜像：
@@ -441,6 +496,8 @@ SA_UPDATE_MIRROR_OUT=/var/www/site_analytics-mirror bash make_mirror.sh
 ```
 
 之后把输出目录暴露为 https（如 `https://<你的域名>/site_analytics-mirror/`），并在国内服务器执行 `echo 'https://<你的域名>/site_analytics-mirror' > /安装目录/.update_mirror`，升级 / 回滚即走你的自建镜像。
+
+> `make_mirror.sh` 还会为每个 tag 同步 `<tag>.sha256sums.txt`，以及 latest 的 `sha256sums.txt`（供升级校验使用，见上节）。旧 tag 拉取清单失败属正常现象——历史 tag 本就没有清单。
 
 ### 单命令（便于脚本 / 监控调用）
 
@@ -665,6 +722,8 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 - 本地开发与运行**只需 Python 标准库**，无需额外环境；仅启用 GeoIP 时才需 `pip install maxminddb`。
 - 提交前请确认 `python3 app.py` 可正常启动、面板可打开。
 - 代码风格保持与现有单文件 `app.py` / `index.html` 一致（零外部依赖优先）。
+
+> **发版与镜像维护**：`sha256sums.txt` 必须在所有代码定稿之后、`git tag` 之前生成并提交进 tag 树，否则 tag 的 raw 地址 404、线上校验会永久降级为告警；Gitee 分支同步有严格约束，禁止把 `main` 直接推到 Gitee 的 `main`。完整发布顺序、校验方式与推送规则见 [CONTRIBUTING.md](CONTRIBUTING.md) 的「发布与维护」章节。
 
 ---
 

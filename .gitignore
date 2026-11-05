@@ -17,7 +17,14 @@ __pycache__/
 # 真实流量分析报告（含已部署站点数据，不入库）
 events分析_异常流量报告.md
 # GeoIP 二进制数据库（运行时用 ./update_geoip.sh 拉取，避免大文件入库）
-geoip/*.mmdb
+geoip/
 
 # UI 预览演示数据（本地临时）
 _preview_data/
+prod_fixed/
+RELEASE_*.md
+_verify_*.py
+_sa_*
+*_shots/
+_head_hashes.txt
+.update_mirror

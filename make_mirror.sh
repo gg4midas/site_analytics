@@ -41,6 +41,16 @@ echo "==> 生成 versions.json"
 tags_json=$(echo "$tags" | sed 's/.*/"&"/' | paste -sd, -)
 printf '{\n  "latest": "%s",\n  "tags": [%s]\n}\n' "$latest" "$tags_json" > "$OUT/versions.json"
 
+echo "==> 拉取各 tag 的 sha256sums.txt（旧 Release 无此文件属正常）"
+for t in $tags; do
+  curl -fsSL --max-time 30 -o "$OUT/$t.sha256sums.txt" \
+    "https://raw.githubusercontent.com/$REPO/$t/sha256sums.txt" 2>/dev/null \
+    || rm -f "$OUT/$t.sha256sums.txt"
+done
+curl -fsSL --max-time 30 -o "$OUT/sha256sums.txt" \
+  "https://raw.githubusercontent.com/$REPO/$latest/sha256sums.txt" 2>/dev/null \
+  || { echo "    警告：latest 的 sha256sums.txt 拉取失败"; rm -f "$OUT/sha256sums.txt"; }
+
 echo "==> 复制最新控制台脚本（便于国内首次引导）"
 curl -fsSL --max-time 30 -o "$OUT/sa-console.sh" "https://raw.githubusercontent.com/$REPO/main/sa-console.sh" 2>/dev/null \
   && chmod +x "$OUT/sa-console.sh" \

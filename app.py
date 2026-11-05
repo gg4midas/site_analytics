@@ -45,7 +45,7 @@ _stats_cache = collections.OrderedDict()        # key=(site, days, range_str) ->
 _sites_cache = collections.OrderedDict()        # key=("_sites",) -> (expire_ts, payload)
 _root_sites_cache = collections.OrderedDict()   # key=主域 -> (expire_ts, 该主域下全部子域列表)；_sites_under_root 缓存
 _stats_cache_lock = threading.Lock()            # 缓存读写锁（P0-C）
-STATS_CACHE_TTL = 45   # 统计结果缓存 45 秒（analytics 容忍数十秒延迟）
+STATS_CACHE_TTL = 90   # 统计结果缓存 90 秒（analytics 容忍数十秒延迟）
 SITES_CACHE_TTL = 30   # 站点列表缓存 30 秒
 STATS_CACHE_MAX = 256  # 统计缓存条目上限；超出按 LRU 淘汰（P0-C 防无界增长）
 ROOT_SITES_TTL = 30    # 主域->子域映射缓存 30 秒（P0-E，与站点列表同源变更失效）
@@ -67,7 +67,7 @@ DEFAULT_PORT = 8899
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_TOKEN = ''
 # 版本（供控制台「关于 / 版本」选项读取；发布新版时请同步更新此值，并同步 sa-console.sh 的 CONSOLE_VER）
-VERSION = "1.8.6"
+VERSION = "1.8.7"
 
 # 单页停留时长上限（秒）：30 分钟。视作脚本/链接上报超时——单次停留或单访客总停留超过即截断，
 # 既防历史脏值（超数千小时）拉偏统计，也避免对单次访问给出不科学的超长停留。
@@ -86,6 +86,28 @@ _USERNAME_RE = re.compile(r'^[\w\-]{2,32}$', re.UNICODE)  # 用户名：2-32 位
 _AUTH_RATE = {}             # ip -> [次数, 窗口起点]；登录/注册限流，防暴力枚举
 _AUTH_RATE_LIMIT = 10       # 每 _AUTH_RATE_WINDOW 秒内每 IP 最多尝试次数
 _AUTH_RATE_WINDOW = 300     # 限流窗口（秒）
+
+# /api/stats?fresh=1 强制重算限流：每 IP 每窗口最多 3 次；超限降级走缓存（不报 429，不影响看数）
+_FRESH_RATE = {}            # ip -> [次数, 窗口起点]
+_FRESH_RATE_WINDOW = 10     # 限流窗口（秒）
+_FRESH_RATE_LIMIT = 3       # 每窗口每 IP 最多 fresh 次数
+
+# ======================== P1 应用层安全响应头（单点追加于 Handler.end_headers）=======================
+# CSP 必须保留 script-src/style-src 的 'unsafe-inline'：登录页 _LOGIN_HTML 有 inline <script>/<style>，
+# index.html 与 static/app.js 含大量 on*= 内联事件；去掉会拦掉登录脚本并破坏 verify_xss_e2e。
+# 禁止 upgrade-insecure-requests / block-all-mixed-content / default-src 'none'（本地 http 直连回归会挂）。
+_SECURITY_HEADERS = (
+    ('X-Content-Type-Options', 'nosniff'),
+    ('Referrer-Policy', 'strict-origin-when-cross-origin'),
+    ('X-Frame-Options', 'SAMEORIGIN'),
+    ('Content-Security-Policy',
+     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+     "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+     "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+     "form-action 'self'; frame-ancestors 'self'"),
+)
+SECURE_COOKIE_ENV = 'SA_SECURE_COOKIE'
+CSRF_STRICT_ENV   = 'SA_CSRF_STRICT'
 
 # ======================== 可信反向代理（P0：防客户端伪造 X-Forwarded-For）=======================
 # 背景：客户端可以自己发送 X-Forwarded-For。nginx 的 $proxy_add_x_forwarded_for 会把请求头
@@ -1683,15 +1705,18 @@ class StatEngine(object):
             self._log('current_online ERROR: %s' % e)
             return 0
 
-    def get_stats(self, site, days=30, range_str=None):
+    def get_stats(self, site, days=30, range_str=None, bypass_cache=False):
         # P0-C：进程内 TTL + LRU 缓存，避免每次刷新重算 30+ 条聚合 SQL；加锁防多线程竞态
+        # bypass_cache=True（/api/stats?fresh=1）：跳过读缓存重算，并用新结果刷新同一 key，
+        # 避免「手刷看到新数据、下次自动刷新回退旧数据」；key 仍为 (site, days, range_str)，不含 fresh
         key = (site, days, range_str)
         now = time.time()
-        with _stats_cache_lock:
-            hit = _stats_cache.get(key)
-            if hit and hit[0] > now:
-                _stats_cache.move_to_end(key)
-                return hit[1]
+        if not bypass_cache:
+            with _stats_cache_lock:
+                hit = _stats_cache.get(key)
+                if hit and hit[0] > now:
+                    _stats_cache.move_to_end(key)
+                    return hit[1]
         payload = self._compute_stats(site, days, range_str)
         if 'error' not in payload:
             with _stats_cache_lock:
@@ -2832,6 +2857,7 @@ class Handler(BaseHTTPRequestHandler):
             data = gzip.compress(data, 6); gz = True
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(data)))
         if gz:
             self.send_header('Content-Encoding', 'gzip')
@@ -2953,8 +2979,8 @@ class Handler(BaseHTTPRequestHandler):
         return user
 
     def _set_session_cookie(self, sid):
-        self.send_header('Set-Cookie', 'sid=%s; HttpOnly; Path=/; Max-Age=%d; SameSite=Lax'
-                         % (sid, SESSION_TTL_DAYS * 86400))
+        self.send_header('Set-Cookie', 'sid=%s; HttpOnly; Path=/; Max-Age=%d; SameSite=Lax%s'
+                         % (sid, SESSION_TTL_DAYS * 86400, self._secure_cookie_suffix()))
 
     def _auth_rate_ok(self):
         """登录/注册限流：每 IP 每 5 分钟最多 10 次，防暴力枚举。"""
@@ -3025,6 +3051,63 @@ class Handler(BaseHTTPRequestHandler):
             return xri
         return peer
 
+    def end_headers(self):
+        # 所有响应出口的唯一收口点：只追加头，勿改已有头、勿写 wfile、勿调 send_response。
+        for _k, _v in _SECURITY_HEADERS:
+            self.send_header(_k, _v)
+        return super().end_headers()
+
+    def _external_scheme(self):
+        force = os.environ.get(SECURE_COOKIE_ENV, '')
+        if force == '1': return 'https'
+        if force == '0': return 'http'
+        peer = self.client_address[0]
+        exact, nets, _ = Handler.trusted_proxies
+        if _ip_in_trusted(peer, exact, nets):
+            xfp = (self.headers.get('X-Forwarded-Proto', '') or '').split(',')[0].strip().lower()
+            if xfp in ('https', 'http'): return xfp
+        return 'http'
+
+    def _secure_cookie_suffix(self):
+        return '; Secure' if self._external_scheme() == 'https' else ''
+
+    _CSRF_EXEMPT = ('/api/event', '/api/login', '/api/register', '/api/logout')
+
+    def _csrf_ok(self, path):
+        p = path.rstrip('/') or '/'
+        if p in self._CSRF_EXEMPT: return True
+        strict = (os.environ.get(CSRF_STRICT_ENV, '') == '1')
+        host = (self.headers.get('Host', '') or '').split(':')[0].lower()
+        origin = self.headers.get('Origin', '')
+        referer = self.headers.get('Referer', '')
+        sfs = (self.headers.get('Sec-Fetch-Site', '') or '').lower()
+        if sfs == 'cross-site':
+            self._send_json({'status': False, 'error': '跨站请求被拒绝'}, 403); return False
+        candidate = ''
+        if origin and origin != 'null': candidate = origin
+        elif referer: candidate = referer
+        if not candidate:
+            if strict:
+                self._send_json({'status': False, 'error': '缺少来源校验头'}, 403); return False
+            return True
+        ch = (urlparse(candidate).hostname or '').lower()
+        if not host or not ch or ch != host:
+            self._send_json({'status': False, 'error': '来源校验失败'}, 403); return False
+        return True
+
+    def _fresh_rate_ok(self):
+        """fresh=1 强制重算限流：每 IP 每窗口最多 3 次；超限返回 False 让请求降级走缓存（不报 429）。"""
+        ip = self.client_ip()
+        now = time.time()
+        ent = _FRESH_RATE.get(ip)
+        if ent is None or now - ent[1] > _FRESH_RATE_WINDOW:
+            _FRESH_RATE[ip] = [1, now]
+            if len(_FRESH_RATE) > 10000:
+                _FRESH_RATE.clear()
+            return True
+        ent[0] += 1
+        return ent[0] <= _FRESH_RATE_LIMIT
+
     def do_OPTIONS(self):
         # P0-F：仅公开上报端点 /api/event 需要跨域预检放行；其余路径不返回 ACAO，避免数据被第三方网页跨域读取
         path = (getattr(self, 'path', '') or '')
@@ -3043,6 +3126,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        if not self._csrf_ok(path): return
         if path in ('/api/site', '/api/site/'):
             # 删除站点（含全部数据）属破坏性管理操作：仅管理员
             if not self._auth(require_admin=True):
@@ -3142,7 +3226,9 @@ class Handler(BaseHTTPRequestHandler):
             days = query.get('days', ['30'])[0]
             range_str = query.get('range', [''])[0]
             try:
-                result = self.engine.get_stats(site, days, range_str=range_str or None)
+                fresh = query.get('fresh', [''])[0] == '1' and self._fresh_rate_ok()
+                result = self.engine.get_stats(site, days, range_str=range_str or None,
+                                              bypass_cache=fresh)
                 if isinstance(result, dict) and 'error' in result:
                     self._send_json({'status': False, 'msg': result['error']}, 400)
                 else:
@@ -3294,6 +3380,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if not self._csrf_ok(path): return
         if path in ('/api/admin/block', '/api/admin/block/'):
             # 确认为异常爬虫后软屏蔽该访客：保留原始事件，统计读取时排除（可恢复）
             # 管理类操作（屏蔽/设置/排序/加站/令牌轮换）：仅管理员
@@ -3510,7 +3597,8 @@ class Handler(BaseHTTPRequestHandler):
             resp = json.dumps({'status': True}).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax')
+            self.send_header('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax%s'
+                             % self._secure_cookie_suffix())
             self.send_header('Content-Length', str(len(resp)))
             self.end_headers()
             self.wfile.write(resp)

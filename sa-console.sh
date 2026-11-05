@@ -16,11 +16,23 @@
 #        也可含 {tag} 占位符，如 https://gitee.com/u/r/repository/archive/{tag}.tar.gz（Gitee 模式，列表改查 Gitee tags API）。
 #        设置后：下载优先走镜像、失败再回退 github/codeload；Gitee 模式要求仓库为「公开」。
 #        也可把镜像地址写入安装目录下的 .update_mirror（一行一个 URL），持久生效。
+#  可选环境变量：SA_REQUIRE_CHECKSUM  设为 1 时，Release 未提供有效 sha256sums.txt
+#        即拒绝安装（默认 0：仅告警继续）。现有 37 个历史 tag 均无清单，默认硬拒绝
+#        会废掉「回滚」这一唯一救命通道，故默认只告警、仍执行 tar 条目安全检查。
+#  供应链完整性校验的边界（如实理解，勿夸大）：
+#        - 归档 tarball 与 sha256sums.txt 从同一 tag、同一成功下载源取（同源）。
+#        - 清单只覆盖「运行时文件」（代码 / 静态资源 / 服务单元 / 脚本），明确排除
+#          README*、CONTRIBUTING.md、docs/*、.gitignore 及清单自身；文档不参与运行，
+#          排除不削弱「防代码 / 静态资源 / 服务单元被替换」。
+#        - 能防：传输损坏、非空截断、CDN 与二级镜像投毒、tar 内夹带未校验文件，
+#          以及绝对路径 / .. 穿越 / 链接 / 特殊文件等恶意 tar 条目。
+#        - 防不住：Release 资产本身被篡改（归档与清单同源，改一处往往能同时改两处）。
+#          这一层需要 GPG detached / minisign / Sigstore 等带外签名，本脚本不提供。
 # ============================================================================
 set -u
 
 # 控制台自身版本（与 app.py 的 VERSION 相互独立；发布新版时同步更新）
-CONSOLE_VER="1.8.6"
+CONSOLE_VER="1.8.7"
 
 # GitHub 仓库（用于版本检查 / 升级 / 回滚）
 GITHUB_REPO="gg4midas/site_analytics"
@@ -341,6 +353,113 @@ download_tarball() {
   return 1
 }
 
+sa256() {
+  local f="$1" h
+  if command -v sha256sum >/dev/null 2>&1; then
+    h=$(sha256sum "$f" 2>/dev/null) || return 1; printf '%s\n' "${h%% *}"
+  elif command -v shasum >/dev/null 2>&1; then
+    h=$(shasum -a 256 "$f" 2>/dev/null) || return 1; printf '%s\n' "${h%% *}"
+  elif command -v openssl >/dev/null 2>&1; then
+    h=$(openssl dgst -sha256 -r "$f" 2>/dev/null) || return 1; printf '%s\n' "${h%% *}"
+  else
+    echo "  [!] 找不到 sha256 工具（sha256sum/shasum/openssl 均缺失）" >&2; return 1
+  fi
+}
+
+checksum_url_for() {
+  local tag="$1" u="$2" owner repo base
+  case "$u" in
+    *gitee.com*)
+      owner=$(printf '%s' "$u" | sed -E 's#https://gitee\.com/([^/]+)/.*#\1#')
+      repo=$(printf '%s' "$u" | sed -E 's#https://gitee\.com/[^/]+/([^/]+)/.*#\1#')
+      printf 'https://gitee.com/%s/%s/raw/%s/sha256sums.txt\n' "$owner" "$repo" "$tag" ;;
+    https://github.com/*|https://codeload.github.com/*)
+      printf 'https://raw.githubusercontent.com/%s/%s/sha256sums.txt\n' "$GITHUB_REPO" "$tag" ;;
+    *)
+      base="${u%/*}"
+      printf '%s/%s.sha256sums.txt\n' "$base" "$tag"
+      printf '%s/sha256sums.txt\n' "$base" ;;
+  esac
+}
+
+fetch_checksums() {
+  local tag="$1" used="$2" out="$3" url
+  while IFS= read -r url; do
+    [ -z "$url" ] && continue
+    if download_tarball "$url" "$out" "$out.err" && [ -s "$out" ]; then
+      echo "  [i] 校验清单来源: $url"; return 0
+    fi
+  done < <(checksum_url_for "$tag" "$used")
+  return 1
+}
+
+# 解压前：清单自身格式预检（不依赖任何 GNU 特性，busybox awk 可用）
+validate_manifest() {
+  local sums="$1"
+  [ -s "$sums" ] || { echo "  [!] 校验清单为空/缺失"; return 1; }
+  awk '
+    { sub(/\r$/, "") }                       # 兼容 gitee 分支可能引入的 CRLF
+    /^#/ || /^[[:space:]]*$/ { next }
+    {
+      n++                                   # 先计数，避免格式非法时误报「清单为空」
+      if (NF != 2 || length($1) != 64 || $1 !~ /^[0-9a-fA-F]+$/) {
+        print "  [!] 清单格式非法: " $0; bad = 1; next
+      }
+      p = $2
+      # 用 sprintf("%c",92) 在运行时生成反斜杠字符，避免在 awk 正则字面量里写反斜杠
+      # （写 /\\/ 会在消息/引号/awk 三层传递中被折半，awk 直接报 unterminated regexp）
+      if (p ~ /^\// || p ~ /(^|\/)\.\.(\/|$)/ || index(p, sprintf("%c", 92)) > 0) {
+        print "  [!] 清单路径非法: " p; bad = 1
+      }
+    }
+    END { if (n == 0) { print "  [!] 清单为空"; bad = 1 } exit(bad ? 1 : 0) }
+  ' "$sums"
+}
+
+verify_tree() {
+  local src="$1" sums="$2" line hex rel f rc=0
+  while IFS= read -r line; do
+    line=$(printf '%s' "$line" | tr -d '\r')
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue;; esac
+    hex=${line%% *}; rel=${line#*  }
+    [ "$hex" = "$line" ] && continue
+    case "$rel" in *.tar.gz) continue;; esac
+    if [ ! -f "$src/$rel" ]; then echo "  [!] 清单文件缺失: $rel"; rc=1; continue; fi
+    f=$(sa256 "$src/$rel") || { rc=1; continue; }
+    [ "$f" = "$(printf '%s' "$hex" | tr 'A-Z' 'a-z')" ] \
+      || { echo "  [!] sha256 不匹配: $rel"; rc=1; }
+  done < "$sums"
+  return "$rc"
+}
+
+check_tar_entries() {
+  local arc="$1" n line bad=0
+  while IFS= read -r n; do
+    case "$n" in
+      /*)                echo "  [!] 绝对路径条目: $n"; bad=1;;
+      *../*|*/..|..)     echo "  [!] .. 穿越条目: $n"; bad=1;;
+      *\\*)              echo "  [!] 含反斜杠/转义条目: $n"; bad=1;;
+      *[![:print:]]*)    echo "  [!] 含控制字符条目: $n"; bad=1;;
+    esac
+  done < <(tar -tzf "$arc" 2>/dev/null)
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "${line:0:1}" in
+      -|d) ;;
+      *) echo "  [!] 非普通条目(type=${line:0:1}): $line"; bad=1;;
+    esac
+  done < <(tar -tvzf "$arc" 2>/dev/null)
+  return "$bad"
+}
+
+# GNU tar 才支持 --no-same-owner/--no-same-permissions；busybox/bsdtar 不认识。
+sa_tar_is_gnu() {
+  if tar --version 2>/dev/null | grep -qi 'gnu tar'; then return 0; fi
+  if tar --no-same-owner --help >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
 # 下载指定 tag 的 tarball，覆盖代码文件（保留 data/ 数据库与本地配置），重启服务。
 # 同时被「升级」与「回滚」复用。
 do_install_release() {
@@ -370,16 +489,71 @@ do_install_release() {
   fi
   echo "已从以下源下载成功：$(basename "$used")"
   if [ ! -s "$tmp/arc.tar.gz" ]; then echo "下载内容为空，已中止。"; rm -rf "$tmp"; return 1; fi
+
+  # ===== 供应链完整性校验（全部在 do_stop 之前完成）=====
+  local sums="$tmp/sha256sums.txt" HAVE_SUMS=0 sums_url
+  sums_url=$(checksum_url_for "$tag" "$used" | head -1)
+  if fetch_checksums "$tag" "$used" "$sums" && validate_manifest "$sums"; then
+    HAVE_SUMS=1
+  else
+    if [ "${SA_REQUIRE_CHECKSUM:-0}" = "1" ]; then
+      echo "未找到/非法 sha256sums.txt（$sums_url），且 SA_REQUIRE_CHECKSUM=1，已中止（未解压、未停服）。"
+      rm -rf "$tmp"; return 1
+    fi
+    echo "  [警告] 该 Release 未提供有效 sha256sums.txt（$sums_url），跳过哈希校验（旧版 Release 属正常）。"
+    echo "  [警告] 仍会执行 tar 条目安全检查；建议升级到带校验清单的新版本，或设 SA_REQUIRE_CHECKSUM=1 强制。"
+  fi
+  if ! check_tar_entries "$tmp/arc.tar.gz"; then
+    echo "归档含危险条目（绝对路径 / .. / 链接 / 特殊文件），已中止（未解压、未停服）。"
+    rm -rf "$tmp"; return 1
+  fi
+
   mkdir -p "$tmp/x"
-  if ! tar -xzf "$tmp/arc.tar.gz" -C "$tmp/x" 2>/dev/null; then echo "解压失败。"; rm -rf "$tmp"; return 1; fi
+  if sa_tar_is_gnu; then
+    echo "  [i] tar=GNU，启用属主/权限加固（--no-same-owner --no-same-permissions）"
+    if ! tar --no-same-owner --no-same-permissions -k -xzf "$tmp/arc.tar.gz" -C "$tmp/x"; then
+      echo "解压失败。"; rm -rf "$tmp"; return 1; fi
+  else
+    echo "  [降级] 检测到非 GNU tar（busybox/bsdtar）：跳过 --no-same-*，改用 tar -xzf。"
+    echo "         解压后将统一归一化属主并清除 setuid/setgid；tar 条目安全检查仍无条件强制执行。"
+    if ! tar -xzf "$tmp/arc.tar.gz" -C "$tmp/x"; then
+      echo "解压失败。"; rm -rf "$tmp"; return 1; fi
+  fi
+  chown -R "$(id -u):$(id -g)" "$tmp/x" 2>/dev/null || true
+  find "$tmp/x" -type f -exec chmod a-s {} \; 2>/dev/null || true
+
   local src; src=$(find "$tmp/x" -maxdepth 1 -mindepth 1 -type d | head -1)
   if [ -z "$src" ] || [ ! -f "$src/app.py" ]; then echo "解包结果异常（未找到 app.py），已中止。"; rm -rf "$tmp"; return 1; fi
+
+  # ===== 逐文件 sha256 + 清单外文件白名单（仍全部在 do_stop 之前）=====
+  if [ "$HAVE_SUMS" = "1" ]; then
+    if ! verify_tree "$src" "$sums"; then
+      echo "文件 sha256 校验失败，已中止（未停服、未覆盖）。"; rm -rf "$tmp"; return 1
+    fi
+    echo "  [ok] 逐文件 sha256 校验通过（$(awk 'NF==2{c++}END{print c+0}' "$sums") 项运行时文件）"
+  fi
+  # 清单收窄到运行时文件后，必须拦住归档里夹带的清单外普通文件（如 static/evil.js）
+  if [ "$HAVE_SUMS" = "1" ]; then
+    ( cd "$src" && find . -type f | sed 's#^\./##' | sort ) > "$tmp/actual.list"
+    awk 'NF==2{print $2}' "$sums" 2>/dev/null | tr -d '\r' | sort > "$tmp/allowed.list"
+    _extra=$(comm -23 "$tmp/actual.list" "$tmp/allowed.list" \
+             | grep -vE '^(README\.md|README_EN\.md|CONTRIBUTING\.md|\.gitignore|sha256sums\.txt|docs/.*|static/world\.json)$')
+    if [ -n "$_extra" ]; then
+      echo "归档含清单外文件（未校验，拒绝安装）: $_extra"; rm -rf "$tmp"; return 1
+    fi
+  fi
+
   echo "已下载，正在覆盖文件（保留 data/ 数据库与本地配置）..."
   do_stop
   sleep 1
   # 用 tar 同步代码文件，排除版本库 / 数据库 / 日志 / data（保留已采集数据）
-  ( cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' --exclude='geoip/GeoLite2-City.mmdb' . ) \
-    | ( tar -xf - -C "$INSTALL_DIR" )
+  # pipefail 放在子 shell 内，只作用于这一条管道、不污染全局 shell 选项。
+  # 否则 `! 左 | 右` 只看右侧 tar -xf 的退出码，左侧 tar -cf 失败会被吞掉却仍报更新成功。
+  if ! ( set -o pipefail
+         cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' \
+           --exclude='geoip/GeoLite2-City.mmdb' --exclude='.update_mirror' . \
+         | tar -xf - -C "$INSTALL_DIR" ); then
+    echo "覆盖安装失败（管道中断），请人工检查 $INSTALL_DIR 后重试。"; return 1; fi
   [ -f "$INSTALL_DIR/sa-console.sh" ] && chmod +x "$INSTALL_DIR/sa-console.sh"
   echo "已更新至 $(app_version)（$label）。"
   rm -rf "$tmp"

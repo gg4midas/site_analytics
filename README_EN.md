@@ -92,6 +92,8 @@ site_analytics/
 │   ├── echarts.min.js      # Local chart library (bundled, no network needed)
 │   ├── style.css           # Dashboard styles (split from index.html in v1.6.0)
 │   ├── i18n.js             # Dashboard i18n dictionary & translation helpers (zh/EN, shared with login page)
+│   ├── iso3166.json        # Country/region code lookup table
+│   ├── world_map.json      # ECharts world map GeoJSON (coordinates kept at 2 decimals)
 │   └── app.js              # Dashboard app logic (split from index.html in v1.6.0)
 ├── start.sh                # Start script (runs in background, writes run.log)
 ├── restart.sh              # Restart script
@@ -103,6 +105,8 @@ site_analytics/
 ```
 
 > The `.mmdb` databases under `geoip/` are ~130MB and excluded via `.gitignore` (not in the repo). After cloning, fetch them with `update_geoip.sh`.
+
+> **Static asset cleanup (this batch)**: the front end always loads `static/world_map.json`. `static/world.json` was removed (1,010,239 B, zero references repo-wide, geometrically duplicate of `world_map.json`); `static/world_map.json` coordinate precision was reduced to **2 decimal places** (1,069,687 B → 462,979 B; 217 features / Polygon 126 / MultiPolygon 91 all unchanged). Precision **must not** be reduced to 1 decimal place — testing showed it produces many degenerate edges and collapsed rings. The self-update manifest covers runtime files only, not docs — see "Upgrade Integrity Verification".
 
 ---
 
@@ -220,6 +224,45 @@ Startup logs report the current state (`自助注册：已关闭` = disabled, `�
 ### Public endpoints
 
 Only the following require no login: `/api/event` (event reporting), `/tracker.js`, `/static/*` assets, the `/login` page and the login / session-info APIs. `/api/register` is disabled by default (returns 403) and only works when `SA_ALLOW_REGISTER=1` is set. Everything else requires login; admin-only APIs additionally require the admin role.
+
+---
+
+## Security Hardening (v1.8.7)
+
+The following describes the v1.8.7 batch of application-layer and ops hardening changes, covering global security response headers, the session cookie's `Secure` condition, the default-compatible CSRF mode, and the back-end stats cache adjustment.
+
+### Application-Layer Security Response Headers
+
+All HTTP responses get the headers appended at a single choke point — `Handler.end_headers()` in `app.py`. This is the only injection point and covers every response type (including gzip compression, ETag `304`, `204`, `302`, `404`, `HEAD`) without breaking `Content-Length`:
+
+| Header | Value |
+|--------|-------|
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-Frame-Options` | `SAMEORIGIN` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` |
+
+> **Why CSP keeps `'unsafe-inline'`**: the login page is server-rendered inline `<script>` / `<style>`; `index.html` has 33 HTML `on*` event attributes; and the HTML dynamically assembled in `static/app.js` contains 20+ more `on*` handlers. Removing `'unsafe-inline'` would directly break dashboard rendering and interaction, so it is kept as-is — not a temporary leftover.
+
+### Session Cookie `Secure` Condition
+
+The session cookie is still named `sid`. `; Secure` is appended only when either condition holds: a trusted reverse proxy forwards `X-Forwarded-Proto: https`, or `SA_SECURE_COOKIE=1` is explicitly set. A local plain-HTTP direct connection (development / intranet deployment) does not carry `Secure`, avoiding a regression where the login session cannot be written back over plaintext HTTP. The existing `HttpOnly`, `Path=/`, and `Max-Age` are unchanged.
+
+### CSRF Protection (default-compatible mode)
+
+Management-type write requests (`POST` / `DELETE`) are checked by origin:
+
+- Missing `Origin` / `Referer` → **allowed** (compatibility with older clients, `curl`, non-browser callers).
+- An explicitly cross-site `Origin` → `403`.
+- Setting `SA_CSRF_STRICT=1` switches to strict mode: requests missing the origin headers are then rejected too.
+
+Exempt paths: `/api/event`, `/api/login`, `/api/register`, `/api/logout`. Among them, `/api/event` must remain open to anonymous cross-origin reporting from any `Origin` and return `Access-Control-Allow-Origin: *` (required for browser instrumentation) — it is **not** under CSRF protection.
+
+### Stats Cache and Manual Refresh (back end)
+
+- The back-end stats cache `STATS_CACHE_TTL` was changed from 45 seconds to **90 seconds**. This is the **back-end stats API cache**, not the front-end poll / refresh interval; the front-end auto-refresh timers (15s / 30s / 60s) are unchanged in this batch.
+- `GET /api/stats?fresh=1` bypasses the read cache and re-aggregates, but **still writes back to the same cache key**, and is rate-limited by `_fresh_rate_ok()` (at most 3 times per 10 seconds) to avoid frequent cache penetration.
+- The stats JSON response now carries `Cache-Control: no-store`.
 
 ---
 
@@ -408,6 +451,18 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 - **3 Start / 4 Stop / 5 Restart**: Works with both "nohup + start.sh" and "systemd service" run modes; locates the process by listen port so status is accurate.
 - **6 Health check / 7 View logs**: Health check covers process / port listening / HTTP probe (direct to `127.0.0.1:$PORT`, unaffected by reverse proxy) / data-directory writability; View logs prints the last 40 lines of `run.log`.
 
+### Upgrade Integrity Verification (sha256sums.txt)
+
+"Check for updates (upgrade)" adds optional integrity verification inside `do_install_release()` in `sa-console.sh`:
+
+- New env var `SA_REQUIRE_CHECKSUM=1`: when `sha256sums.txt` is missing or invalid, **abort the upgrade** and print "not extracted, service not stopped"; **when unset by default, only warn and continue** — roughly 37 historical tags have no manifest, so a hard rejection would disable the "roll back to an older version" capability.
+- The verification order is fixed: download → derive the manifest URL from the **first successful download source** → manifest format check → tar entry-name safety check → extract → per-file sha256 verification → allow-list for files outside the manifest → **all completed before `do_stop`** (verify first, stop the service afterwards).
+- The tar entry-name check is **unconditionally enforced**, rejecting: absolute paths, `..`, backslashes, control characters, and symlink / hardlink / FIFO / device entries.
+- GNU tar uses `--no-same-owner --no-same-permissions -k`; non-GNU tar (busybox / bsdtar) falls back to plain `tar -xzf`, but after extraction a uniform `chown -R` + `chmod a-s` is applied in both cases.
+- `sha256sums.txt` **lists only 18 runtime files**: `app.py`, `index.html`, `tracker.js`, `tracker-loader.html`, `sa-console.sh`, `site_analytics.service`, `nginx_bypass_auth.conf`, `update_geoip.sh`, `make_mirror.sh`, `start.sh`, `restart.sh`, `LICENSE`, `static/app.js`, `static/echarts.min.js`, `static/i18n.js`, `static/iso3166.json`, `static/style.css`, `static/world_map.json`. Docs and `.gitignore` are excluded — the gitee branch and main have different `README.md` bytes and the branch lacks `README_EN.md`, so a branch-packaged mirror would produce false positives with a full manifest; the allow-list additionally permits `static/world.json` (needed when rolling back to old tags).
+
+> **Trust boundary (stated honestly)**: same-origin archive + manifest guards against transfer corruption, CDN poisoning, and second-tier mirror poisoning; it **cannot protect against the Release assets themselves being tampered with** — that requires GPG / minisign / Sigstore-style signatures, which this project does not currently provide. Do not read this as signed-asset protection.
+
 ### Domestic mirror (Gitee / self-hosted, optional)
 
 GitHub's source packages live at `codeload.github.com`, a domain often blocked or timed-out in some regions, causing "upgrade / rollback" downloads to fail. The console supports a **mirror source**: both downloads and the version list prefer the mirror. The easiest option is to use **Gitee** as the mirror:
@@ -439,6 +494,8 @@ SA_UPDATE_MIRROR_OUT=/var/www/site_analytics-mirror bash make_mirror.sh
 ```
 
 Then expose the output directory as https (e.g. `https://<your-domain>/site_analytics-mirror/`), and on the domestic server run `echo 'https://<your-domain>/site_analytics-mirror' > /install/dir/.update_mirror`; upgrade / rollback then use your own mirror.
+
+> `make_mirror.sh` also syncs `<tag>.sha256sums.txt` for each tag plus the latest `sha256sums.txt` (used by upgrade verification, see the section above). A failed manifest fetch for old tags is normal — historical tags simply have no manifest.
 
 ### Single commands (for scripts / monitoring)
 
@@ -650,6 +707,8 @@ Issues and Pull Requests are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for
 - Local development and running **only require the Python standard library** — no extra environment; `pip install maxminddb` is needed only when enabling GeoIP.
 - Before submitting, confirm `python3 app.py` starts normally and the dashboard opens.
 - Keep code style consistent with the existing single-file `app.py` / `index.html` (zero external dependencies preferred).
+
+> **Release and mirror maintenance**: `sha256sums.txt` must be generated and committed into the tag tree after all code is finalized and before `git tag`; otherwise the tag's raw URL 404s and online verification permanently degrades to a warning. Gitee branch syncing has strict constraints — never push `main` directly to Gitee's `main`. The full release order, verification steps, and push rules are in the "Release & Maintenance" section of [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
