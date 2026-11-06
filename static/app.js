@@ -502,11 +502,15 @@ function getRangeParams(){
   return '&range=' + encodeURIComponent(currentRange);
 }
 
-function loadData(only){
+function loadData(only, fresh){
   if(!currentSite){ return; }
   setLoading(true);
   setTip(t('正在加载统计数据…'));
-  fetch(apiUrl('/api/stats?site='+encodeURIComponent(currentSite)+getRangeParams()))
+  // fresh 仅由「手动刷新」传入：绕过后端 STATS_CACHE_TTL 重新聚合。
+  // 自动刷新（60s）与切站点/切区间保持走缓存，避免击穿统计缓存。
+  var statsUrl = '/api/stats?site='+encodeURIComponent(currentSite)+getRangeParams()
+                 + (fresh ? '&fresh=1' : '');
+  fetch(apiUrl(statsUrl))
     .then(function(r){ return r.json(); })
     .then(function(res){
       safeCall(function(){
@@ -568,7 +572,8 @@ function manualRefresh(){
   }
   if(currentTab==='realtime'){ loadRecent(true); done(); }
   else if(currentTab==='visitors'){ loadVisitors(); done(); }
-  else { loadData(currentTab); done(); }
+  // 统计类页签手动刷新时强制穿透后端缓存；实时/访客页走各自接口，不受 stats 缓存影响
+  else { loadData(currentTab, true); done(); }
 }
 
 function renderOverview(d){
@@ -604,6 +609,31 @@ function renderOverview(d){
       (k.sub?'<div class="sub">'+k.sub+'</div>':'')+'</div>';
   }
   document.getElementById('kpis').innerHTML=html;
+
+  // 被软屏蔽占比说明：字段由后端 /api/stats 提供，旧版本后端或异常时按 0 兜底，避免出现 NaN%
+  var note = document.getElementById('blockedNote');
+  if(note){
+    var be = Number(d.blocked_events)||0;
+    var bv = Number(d.blocked_visible)||0;
+    var den = Number(d.blocked_denominator)||0;
+    var uv = Number(d.blocked_uv)||0;
+    var ratio = Number(d.blocked_ratio)||0;
+    if(den > 0){
+      var parts = [
+        t('被软屏蔽 {n} 次（占落库受理事件 {p}%）· 去重访客 {v} 位', {n:fmtNum(be), p:ratio.toFixed(2), v:fmtNum(uv)}),
+        t('口径：受理 {n} - 可见 {p} = 被屏蔽 {t}', {n:fmtNum(den), p:fmtNum(bv), t:fmtNum(be)}),
+        t('说明：本行含机房自动软屏蔽与人工软屏蔽之和；爬虫 UA 由 is_bot() 静默丢弃、未落库，本版本未计数；分母为落库受理事件数（不限 pageview），与上方 PV（仅 pageview）不同；与「已屏蔽访客」面板的累计去重访客数也不同（后者不限时间窗口、含人工屏蔽）。')
+      ];
+      if(d.blocked_asn_enabled === false){
+        parts.push(t('提示：未启用 ASN 库，新增机房流量不会被自动识别（已屏蔽名单仍生效）；本行数值可能因人工屏蔽而非零。'));
+      }
+      note.textContent = parts.filter(Boolean).join('\n');
+      note.style.display = '';
+    } else {
+      note.textContent = '';
+      note.style.display = 'none';
+    }
+  }
 
   var c1=initChart('chartTrend');
   if(c1){

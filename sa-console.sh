@@ -537,7 +537,7 @@ do_install_release() {
     ( cd "$src" && find . -type f | sed 's#^\./##' | sort ) > "$tmp/actual.list"
     awk 'NF==2{print $2}' "$sums" 2>/dev/null | tr -d '\r' | sort > "$tmp/allowed.list"
     _extra=$(comm -23 "$tmp/actual.list" "$tmp/allowed.list" \
-             | grep -vE '^(README\.md|README_EN\.md|CONTRIBUTING\.md|\.gitignore|sha256sums\.txt|docs/.*|static/world\.json)$')
+             | grep -vE '^(README\.md|README_EN\.md|CONTRIBUTING\.md|\.gitignore|sha256sums\.txt|docs/.*|static/world\.json|tests/[A-Za-z0-9_.-]+\.py)$')
     if [ -n "$_extra" ]; then
       echo "归档含清单外文件（未校验，拒绝安装）: $_extra"; rm -rf "$tmp"; return 1
     fi
@@ -551,7 +551,7 @@ do_install_release() {
   # 否则 `! 左 | 右` 只看右侧 tar -xf 的退出码，左侧 tar -cf 失败会被吞掉却仍报更新成功。
   if ! ( set -o pipefail
          cd "$src" && tar -cf - --exclude='.git' --exclude='*.db' --exclude='run.log' --exclude='data' \
-           --exclude='geoip/GeoLite2-City.mmdb' --exclude='.update_mirror' . \
+           --exclude='geoip/GeoLite2-City.mmdb' --exclude='.update_mirror' --exclude='tests' . \
          | tar -xf - -C "$INSTALL_DIR" ); then
     echo "覆盖安装失败（管道中断），请人工检查 $INSTALL_DIR 后重试。"; return 1; fi
   [ -f "$INSTALL_DIR/sa-console.sh" ] && chmod +x "$INSTALL_DIR/sa-console.sh"

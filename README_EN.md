@@ -100,6 +100,7 @@ site_analytics/
 ├── sa-console.sh           # Server management console: start/stop/restart/version-check-upgrade/one-click rollback
 ├── site_analytics.service  # systemd unit example
 ├── update_geoip.sh         # Download / update GeoLite2 databases (City + ASN)
+├── tests/                  # Regression test scripts (10 stdlib / bash scripts; run from repo root with python tests/test_xxx.py)
 ├── geoip/                  # Runtime location for GeoLite2-*.mmdb (download yourself, not in repo)
 └── data/                   # Generated at runtime: events.db + run.log / debug.log
 ```
@@ -107,6 +108,8 @@ site_analytics/
 > The `.mmdb` databases under `geoip/` are ~130MB and excluded via `.gitignore` (not in the repo). After cloning, fetch them with `update_geoip.sh`.
 
 > **Static asset cleanup (this batch)**: the front end always loads `static/world_map.json`. `static/world.json` was removed (1,010,239 B, zero references repo-wide, geometrically duplicate of `world_map.json`); `static/world_map.json` coordinate precision was reduced to **2 decimal places** (1,069,687 B → 462,979 B; 217 features / Polygon 126 / MultiPolygon 91 all unchanged). Precision **must not** be reduced to 1 decimal place — testing showed it produces many degenerate edges and collapsed rings. The self-update manifest covers runtime files only, not docs — see "Upgrade Integrity Verification".
+
+> **Regression scripts (this batch)**: a new `tests/` directory holds 10 pure-stdlib / bash regression scripts; run them from the repo root with `python tests/test_xxx.py`, and each script locates `app.py` automatically. `tests/` is not in `sha256sums.txt` (which lists only 18 runtime files), but tag tarballs still contain it; accordingly `sa-console.sh` allow-lists only top-level `.py` scripts under `tests/` (pattern `tests/[A-Za-z0-9_.-]+\.py`) and excludes `tests` during overlay installs, so test scripts are not written into the production directory.
 
 ---
 
@@ -152,7 +155,7 @@ After the dashboard starts, embed the snippet (see "Embed the Snippet" below) in
 
 ## Configuration
 
-All parameters are passed on the command line — there is no config file:
+Startup flags are passed on the command line; a few runtime behaviors are tuned via environment variables — there is no config file:
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
@@ -162,6 +165,8 @@ All parameters are passed on the command line — there is no config file:
 | `--data-dir` | `./data` | Data storage directory (holds `events.db`, logs). Can point to another disk/mount. |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP city database path. Geographic features auto-disable if the file is absent. |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN database path, used to identify the visitor's ISP. |
+| `SA_EVENT_RATE_LIMIT` (env var) | `600` | `/api/event` rate limit: number of events a single client IP may report within one window; exceeding it returns `429`. |
+| `SA_EVENT_RATE_WINDOW` (env var) | `60` (seconds) | Length of the rate-limit window in seconds; together with `SA_EVENT_RATE_LIMIT`, counted globally per client IP. |
 
 Examples:
 
@@ -225,6 +230,8 @@ Startup logs report the current state (`自助注册：已关闭` = disabled, `�
 
 Only the following require no login: `/api/event` (event reporting), `/tracker.js`, `/static/*` assets, the `/login` page and the login / session-info APIs. `/api/register` is disabled by default (returns 403) and only works when `SA_ALLOW_REGISTER=1` is set. Everything else requires login; admin-only APIs additionally require the admin role.
 
+> `/api/event` is now rate-limited per client IP: requests over the quota return `429` (body `{"status": false, "error": "上报过于频繁，请稍后再试"}` — "reporting too frequent, try again later"), but still carry `Access-Control-Allow-Origin: *`, so browser instrumentation is unaffected. See "/api/event rate limiting".
+
 ---
 
 ## Security Hardening (v1.8.7)
@@ -263,6 +270,28 @@ Exempt paths: `/api/event`, `/api/login`, `/api/register`, `/api/logout`. Among 
 - The back-end stats cache `STATS_CACHE_TTL` was changed from 45 seconds to **90 seconds**. This is the **back-end stats API cache**, not the front-end poll / refresh interval; the front-end auto-refresh timers (15s / 30s / 60s) are unchanged in this batch.
 - `GET /api/stats?fresh=1` bypasses the read cache and re-aggregates, but **still writes back to the same cache key**, and is rate-limited by `_fresh_rate_ok()` (at most 3 times per 10 seconds) to avoid frequent cache penetration.
 - The stats JSON response now carries `Cache-Control: no-store`.
+
+---
+
+## New in This Batch: Event Rate Limiting and Stats-Query Performance
+
+### /api/event rate limiting
+
+`/api/event` is now rate-limited by a **global per-client-IP counter**, controlled by two new environment variables:
+
+- `SA_EVENT_RATE_LIMIT` (default `600`): number of events a single client IP may report within one window.
+- `SA_EVENT_RATE_WINDOW` (default `60` seconds): length of the counting window.
+
+Requests over the limit return `429` with `{"status": false, "error": "上报过于频繁，请稍后再试"}` ("reporting too frequent, try again later"); the response still carries `Access-Control-Allow-Origin: *`. The check runs after `client_ip()` and before `_deploy_ok()` and `add_event()`: **a throttled request triggers no GeoIP resolution, no DB write, and no cache invalidation**. Both the GET beacon and the POST path are rate-limited and share the same quota.
+
+> **Prerequisite (verify this)**: the limiter buckets by the client IP resolved by `client_ip()`, which relies on a trusted proxy. If the Nginx reverse proxy is **not on the same host** as the app, or a **CDN / second proxy layer** sits in front, you must set `SA_TRUSTED_PROXIES=<proxy IP or CIDR>`; otherwise every visitor collapses into the single proxy-IP bucket and normal instrumentation is fully `429`-ed. A same-host loopback reverse proxy (the default deployment) needs no change. Also, multiple real visitors behind NAT / a corporate shared egress may share one IP and be affected — tune the thresholds based on post-launch observation.
+
+### Stats-query performance
+
+- `_conn()` now applies connection-level `PRAGMA cache_size=-64000` and `mmap_size=268435456`.
+- `_init_db()` adds a covering index `idx_events_site_type_ts_visitor ON events(site,type,ts,visitor)` so the anti-join stats query uses an index-only scan.
+
+This is a **zero-schema-migration, zero-metric-definition-change** read-side optimization: read-side aggregation is significantly faster, with negligible impact on the write path. For existing databases, `CREATE INDEX IF NOT EXISTS` builds the index automatically at startup — no manual migration.
 
 ---
 
@@ -459,7 +488,7 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 - The verification order is fixed: download → derive the manifest URL from the **first successful download source** → manifest format check → tar entry-name safety check → extract → per-file sha256 verification → allow-list for files outside the manifest → **all completed before `do_stop`** (verify first, stop the service afterwards).
 - The tar entry-name check is **unconditionally enforced**, rejecting: absolute paths, `..`, backslashes, control characters, and symlink / hardlink / FIFO / device entries.
 - GNU tar uses `--no-same-owner --no-same-permissions -k`; non-GNU tar (busybox / bsdtar) falls back to plain `tar -xzf`, but after extraction a uniform `chown -R` + `chmod a-s` is applied in both cases.
-- `sha256sums.txt` **lists only 18 runtime files**: `app.py`, `index.html`, `tracker.js`, `tracker-loader.html`, `sa-console.sh`, `site_analytics.service`, `nginx_bypass_auth.conf`, `update_geoip.sh`, `make_mirror.sh`, `start.sh`, `restart.sh`, `LICENSE`, `static/app.js`, `static/echarts.min.js`, `static/i18n.js`, `static/iso3166.json`, `static/style.css`, `static/world_map.json`. Docs and `.gitignore` are excluded — the gitee branch and main have different `README.md` bytes and the branch lacks `README_EN.md`, so a branch-packaged mirror would produce false positives with a full manifest; the allow-list additionally permits `static/world.json` (needed when rolling back to old tags).
+- `sha256sums.txt` **lists only 18 runtime files**: `app.py`, `index.html`, `tracker.js`, `tracker-loader.html`, `sa-console.sh`, `site_analytics.service`, `nginx_bypass_auth.conf`, `update_geoip.sh`, `make_mirror.sh`, `start.sh`, `restart.sh`, `LICENSE`, `static/app.js`, `static/echarts.min.js`, `static/i18n.js`, `static/iso3166.json`, `static/style.css`, `static/world_map.json`. Docs and `.gitignore` are excluded — the gitee branch and main have different `README.md` bytes and the branch lacks `README_EN.md`, so a branch-packaged mirror would produce false positives with a full manifest; the allow-list additionally permits `static/world.json` (needed when rolling back to old tags) and top-level `.py` regression scripts under `tests/` — these ship in tag tarballs but are neither runtime files nor manifest entries; overlay installs exclude them with `--exclude='tests'`, so they are never written into the production directory.
 
 > **Trust boundary (stated honestly)**: same-origin archive + manifest guards against transfer corruption, CDN poisoning, and second-tier mirror poisoning; it **cannot protect against the Release assets themselves being tampered with** — that requires GPG / minisign / Sigstore-style signatures, which this project does not currently provide. Do not read this as signed-asset protection.
 
@@ -535,6 +564,13 @@ sa-console rollback <tag>          # e.g. sa-console rollback v1.2.0
 3. **(Optional) lock down**: once all your own sites report correctly with their token, start with `--require-key` (or `SA_REQUIRE_KEY=1`). From then on every site — including known ones — must carry the correct token; stolen reports are rejected too.
 4. **Rotate / revoke**: in "Site Management" regenerate that site's token (or change the global `SA_DEPLOY_KEY`), then re-embed; the old token is immediately invalid.
 
+### Fixes and rollout order in this batch
+
+- **`GET /api/site` used to return an always-empty `site_key`** (the response key did not match the database column); it now matches the database, so "Site Management" reads each site's token correctly.
+- **`POST /api/site/key` used to UPDATE 0 rows yet still return a false 200** for sites that had historical data only in `events` and no row in `sites`; it now auto-inserts the missing row. Operators can now reliably "enable token / regenerate token" in the panel, and the generated snippet carries `data-id`.
+
+> **Rollout order (must follow)**: first switch **all** sites to the token-bearing snippet and verify `/api/event` still returns 200, and only then consider enabling `SA_REQUIRE_KEY=1` (`--require-key`). Otherwise the old token-less snippet is rejected and data collection stops. Lenient mode is the safe default during this migration window.
+
 ### Notes
 
 - The token lives in public JS, so it is **not a cryptographic secret** — it stops the most common abuse ("hitting the endpoint directly" / "theft on an unknown domain") and supports rotation. It cannot stop a determined attacker who copies your full `tracker.js` (with the token) and reuses it verbatim; for that, add source-IP/domain allow-listing at the reverse-proxy layer.
@@ -602,7 +638,7 @@ Geographic distribution depends on the MaxMind GeoLite2 database and is **disabl
 | Endpoint | Auth | Notes |
 |----------|------|-------|
 | `GET  /tracker.js` | none | Returns the tracking script |
-| `POST/GET /api/event` | none | Receives reported events (JSON / form / image beacon) |
+| `POST/GET /api/event` | none | Receives reported events (JSON / form / image beacon); rate-limited per client IP, returns 429 when over the limit |
 | `GET  /login` | none | Self-contained login page (register tab hidden unless `SA_ALLOW_REGISTER=1`) |
 | `POST /api/register` | none (disabled by default) | Register a new user. **Returns 403 by default**; requires `SA_ALLOW_REGISTER=1`. When enabled: the first registrant on an empty DB becomes admin and gets a session; everyone else is created as viewer with pending approval (`pending: true`, no session). IP rate-limited |
 | `POST /api/login` | none | Log in (IP rate-limited; sets the session cookie on success) |
@@ -642,6 +678,7 @@ Geographic distribution depends on the MaxMind GeoLite2 database and is **disabl
   - **Speed Index is a synthetic estimate**: browsers cannot capture frame-by-frame screenshots, so this project constructs a "visual completeness curve" integrating FCP / LCP / TTFB to derive it. It is **NOT a Lighthouse-measured Speed Index** and is for trend reference only — do not interpret it as an absolute value (deviation from the true value can reach ±30%~50% and is not calibratable). The UI already labels this item "(est.)".
   - **Basis-deviation notes**: TTFB covers only `responseStart − requestStart`, **excluding** connect / TLS / redirect time, so it runs smaller than standard TTFB; LCP / CLS may be **low** when a visitor leaves early (final report not triggered); older browsers / some Safari do not support the relevant Performance API, and such samples are auto-discarded, so the overall sample skews toward Chromium kernels.
   - **Header P75 vs. per-page / per-device averages use different bases**: the header summary is P75, while the "per-page / per-device" detail tables are **arithmetic means** — different statistical bases, so the numbers are not directly comparable across them.
+- **Soft-blocked share**: the "Soft-blocked" note under the overview KPIs is `COUNT(events) - COUNT(visible_events)` divided by the number of accepted (stored) events in the same window. The numerator is events soft-blocked by `blocked_visitors` that **still remain fully in the `events` table** (both automatic datacenter blocks and manual blocks); the denominator is the count of accepted/stored events in the same window (**not limited to pageviews**). So it differs from the PV above (pageviews only) and from the dashboard's "Blocked Visitors" cumulative unique-visitor count (not limited to a time window, includes manual blocks). This share is a **lower bound**: crawler UAs are silently dropped by `is_bot()` before storage and are not counted in this version, so historical and current figures are unavailable (see "Anomalous-Traffic Flagging and Soft-Blocking").
 
 ---
 
@@ -661,6 +698,16 @@ Based on the GeoLite2-ASN library (requires `maxminddb` installed and `geoip/Geo
 
 ### Soft-blocking (exclude only, recoverable)
 Click "Exclude" on a visitor in the Visitors / Real-time table to add them to `blocked_visitors`. All stats auto-exclude their data via the database view `visible_events`, but the **raw events are fully retained** and can be restored anytime via "Site Management → Blocked Visitors → Restore". Stats read through the view while reporting / deletion operate on the base `events` table, so blocking loses no raw data and is fully reversible.
+
+### Dashboard "Soft-Blocked" note
+
+A new note under the overview KPIs reads: `Soft-blocked N times (P% of accepted stored events) · V unique visitors`, with the self-check identity `accepted - visible = blocked`. Where:
+
+- The numerator `COUNT(events) - COUNT(visible_events)` is events soft-blocked by `blocked_visitors` that **still remain fully in the `events` table** (both automatic datacenter blocks and manual blocks); the denominator is the count of accepted/stored events in the same window (not limited to pageviews), which differs from the PV above (pageviews only) and from the dashboard's "Blocked Visitors" cumulative unique-visitor count (not limited to a time window, includes manual blocks). See "Metric Definitions" for the full definition.
+- **Crawler UAs are not counted**: UAs matching `is_bot()` are silently dropped before storage and are not counted in this version, so historical and current figures are unavailable. The share is therefore a **lower bound**, not the total blocked volume (it only reflects events that were stored first and then soft-blocked).
+- Without the ASN library enabled, only "new datacenter traffic is no longer auto-detected" is affected; the historical block list still applies, so this value may be non-zero due to manual blocks.
+
+> Production anchor (**lifetime example, not a single 30-day window**): on one instance, of 204,219 total events, 66,080 (32.4%) were soft-blocked, 138,139 were visible, and 34,818 visitors were blocked. The service keeps receiving events, so these numbers change over time — treat them as a magnitude reference only.
 
 ---
 

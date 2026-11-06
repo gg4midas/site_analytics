@@ -103,6 +103,7 @@ site_analytics/
 ├── sa-console.sh           # 服务器管理控制台：启停 / 重启 / 版本检查升级 / 一键回滚
 ├── site_analytics.service  # systemd 服务单元示例
 ├── update_geoip.sh         # 下载 / 更新 GeoLite2 数据库（City + ASN）
+├── tests/                  # 回归测试脚本（10 个纯标准库 / bash 脚本，从仓库根用 python tests/test_xxx.py 运行）
 ├── geoip/                  # 运行时放置 GeoLite2-*.mmdb（需自行下载，未入库）
 └── data/                   # 运行时生成：events.db + run.log / debug.log
 ```
@@ -110,6 +111,8 @@ site_analytics/
 > `geoip/` 下的 `.mmdb` 数据库约 130MB，已通过 `.gitignore` 排除，不进仓库；克隆后用 `update_geoip.sh` 拉取即可。
 
 > **静态资源清理（本批）**：前端地图实际加载的始终是 `static/world_map.json`。已删除 `static/world.json`（1,010,239 B，全仓零引用，与 `world_map.json` 几何重复）；`static/world_map.json` 的坐标精度降到 **2 位小数**（1,069,687 B → 462,979 B；217 个 features / Polygon 126 / MultiPolygon 91 全部不变）。精度**不能**降到 1 位——实测会产生大量退化边与塌缩环。自更新清单只覆盖运行时文件、不含文档，详见「升级完整性校验」。
+
+> **回归脚本（本批）**：新增 `tests/` 目录，含 10 个纯标准库 / bash 回归脚本，从仓库根用 `python tests/test_xxx.py` 运行，脚本会自动定位 `app.py`。`tests/` 不在 `sha256sums.txt`（只列 18 个运行时文件）中，但 tag tarball 会带上它们；因此 `sa-console.sh` 白名单只放行 `tests/` 顶层的 `.py` 脚本（正则 `tests/[A-Za-z0-9_.-]+\.py`），且覆盖安装时排除 `tests`，避免把测试脚本写进生产目录。
 
 ---
 
@@ -155,7 +158,7 @@ python3 app.py --create-admin admin 你的密码
 
 ## 配置项
 
-所有参数通过命令行传入，无配置文件：
+启动参数通过命令行传入；部分运行时行为由环境变量调整，均无配置文件：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -165,6 +168,8 @@ python3 app.py --create-admin admin 你的密码
 | `--data-dir` | `./data` | 数据存储目录（放 `events.db`、日志）。可指向其它磁盘/挂载点。 |
 | `--geoip-db` | `./geoip/GeoLite2-City.mmdb` | GeoIP 城市库路径。文件不存在时地域功能自动禁用。 |
 | `--asn-db` | `./geoip/GeoLite2-ASN.mmdb` | GeoIP ASN 库路径，用于识别访客运营商。 |
+| `SA_EVENT_RATE_LIMIT`（环境变量） | `600` | `/api/event` 上报限流：单个客户端 IP 在限流窗口内允许上报的事件数，超限返回 `429`。 |
+| `SA_EVENT_RATE_WINDOW`（环境变量） | `60`（秒） | 上报限流的计数窗口长度（秒），与 `SA_EVENT_RATE_LIMIT` 配合，按客户端 IP 全局计数。 |
 
 示例：
 
@@ -228,6 +233,8 @@ SA_ALLOW_REGISTER=1 python3 app.py          # 或写进 systemd 单元 Environme
 
 仅以下端点无需登录：`/api/event`（埋点上报）、`/tracker.js`、`/static/*` 静态资源、`/login` 登录页及登录 / 会话查询接口。`/api/register` 默认关闭（返回 403），仅在设了 `SA_ALLOW_REGISTER=1` 时才可用。其余接口一律需要登录，管理类接口仅限管理员。
 
+> `/api/event` 现在按客户端 IP 做上报限流：超过配额的请求返回 `429`（响应体 `{'status':false,'error':'上报过于频繁，请稍后再试'}`），但仍带 `Access-Control-Allow-Origin: *`，浏览器埋点不受影响。详见「/api/event 上报限流」。
+
 ---
 
 ## 安全加固（v1.8.7）
@@ -266,6 +273,28 @@ SA_ALLOW_REGISTER=1 python3 app.py          # 或写进 systemd 单元 Environme
 - 后端统计缓存 `STATS_CACHE_TTL` 由 45 秒调整为 **90 秒**。这是**后端统计接口的缓存**，不是前端轮询 / 刷新间隔；前端自动刷新定时器（15s / 30s / 60s 三档）本批未改。
 - `GET /api/stats?fresh=1` 绕过读缓存重新聚合，但**仍写回同一个缓存 key**，并由 `_fresh_rate_ok()` 限流（每 10 秒最多 3 次），避免被频繁穿透。
 - 统计 JSON 响应新增 `Cache-Control: no-store`。
+
+---
+
+## 本批新增：上报限流与统计查询性能
+
+### /api/event 上报限流
+
+`/api/event` 现按**客户端 IP 全局计数**做上报限流，由两个新增环境变量控制：
+
+- `SA_EVENT_RATE_LIMIT`（默认 `600`）：单个客户端 IP 在一个窗口内允许上报的事件数。
+- `SA_EVENT_RATE_WINDOW`（默认 `60` 秒）：计数窗口长度。
+
+超限请求返回 `429` + `{'status':false,'error':'上报过于频繁，请稍后再试'}`，响应仍带 `Access-Control-Allow-Origin: *`。限流发生在 `client_ip()` 之后、`_deploy_ok()` 与 `add_event()` 之前：**被限流的请求不会触发 GeoIP 解析、DB 写入或缓存失效**。GET beacon 与 POST 两条路径都限流、共享同一配额。
+
+> **前置条件（务必确认）**：限流按 `client_ip()` 还原出的客户端 IP 分桶，而 `client_ip()` 依赖可信代理。若 Nginx 反代**不在应用同机**，或前面另有 **CDN / 二层代理**，必须设置 `SA_TRUSTED_PROXIES=<反代IP或CIDR>`，否则所有访客会被归到反代 IP 这一个桶、正常埋点被全量 `429`。同机 loopback 反代（默认部署）无需改动。此外 NAT / 企业共享出口下的多个真实访客可能共用一个 IP 而被误伤，阈值应按上线后的观测调整。
+
+### 统计查询性能收敛
+
+- `_conn()` 增加连接级 `PRAGMA cache_size=-64000` 与 `mmap_size=268435456`。
+- `_init_db()` 增加覆盖索引 `idx_events_site_type_ts_visitor ON events(site,type,ts,visitor)`，让 anti-join 统计查询走 index-only scan。
+
+这是**零 schema 迁移、零统计口径变化**的读侧优化：读侧聚合显著提速、写入路径影响可忽略。对旧库，`CREATE INDEX IF NOT EXISTS` 会在启动时自动建好，无需手工迁移。
 
 ---
 
@@ -461,7 +490,7 @@ ln -s "$(pwd)/sa-console.sh" /usr/local/bin/sa-console
 - 校验顺序固定为：下载 → 按**首个成功下载源**推导清单 URL → 清单格式校验 → tar 条目名安全检查 → 解压 → 逐文件 sha256 校验 → 清单外文件白名单 → **全部在 `do_stop` 之前完成**（先校验、后停服）。
 - tar 条目名检查**无条件强制**，拒绝：绝对路径、`..`、反斜杠、控制字符，以及 symlink / hardlink / FIFO / 设备文件。
 - GNU tar 使用 `--no-same-owner --no-same-permissions -k`；非 GNU tar（busybox / bsdtar）降级为普通 `tar -xzf`，但解压后统一执行 `chown -R` 与 `chmod a-s`。
-- `sha256sums.txt` **只列 18 个运行时文件**：`app.py`、`index.html`、`tracker.js`、`tracker-loader.html`、`sa-console.sh`、`site_analytics.service`、`nginx_bypass_auth.conf`、`update_geoip.sh`、`make_mirror.sh`、`start.sh`、`restart.sh`、`LICENSE`、`static/app.js`、`static/echarts.min.js`、`static/i18n.js`、`static/iso3166.json`、`static/style.css`、`static/world_map.json`。文档与 `.gitignore` 被排除——因为 gitee 分支与 main 的 `README.md` 字节不同、且缺少 `README_EN.md`，按分支打包的镜像若用全量清单会误报；白名单额外允许 `static/world.json`（旧 tag 回滚需要）。
+- `sha256sums.txt` **只列 18 个运行时文件**：`app.py`、`index.html`、`tracker.js`、`tracker-loader.html`、`sa-console.sh`、`site_analytics.service`、`nginx_bypass_auth.conf`、`update_geoip.sh`、`make_mirror.sh`、`start.sh`、`restart.sh`、`LICENSE`、`static/app.js`、`static/echarts.min.js`、`static/i18n.js`、`static/iso3166.json`、`static/style.css`、`static/world_map.json`。文档与 `.gitignore` 被排除——因为 gitee 分支与 main 的 `README.md` 字节不同、且缺少 `README_EN.md`，按分支打包的镜像若用全量清单会误报；白名单额外允许 `static/world.json`（旧 tag 回滚需要）与 `tests/` 顶层的 `.py` 回归脚本——后者会随 tag tarball 一起分发、但既非运行时文件也不纳入清单；覆盖安装时用 `--exclude='tests'` 排除，不会写进生产目录。
 
 > **可信边界（如实说明）**：同源归档 + 清单能防传输损坏、CDN 投毒与二级镜像投毒；但它**防不住 Release 资产本身被篡改**——那需要 GPG / minisign / Sigstore 之类的签名，本项目当前不提供，请勿据此认为资产已获签名保护。
 
@@ -537,6 +566,13 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
    - 想统一锁死所有站点：可设一个**全局兜底令牌**（`SA_DEPLOY_KEY` 环境变量或 `--deploy-key` 启动参数），任何站点可用；主要用于「严格模式」下一键管控。
 2. **（可选）彻底锁死**：确认所有自有站点都用「站点管理」生成的代码正常上报后，启动加 `--require-key`（或环境变量 `SA_REQUIRE_KEY=1`）。此后连已知站点也必须带正确令牌，被盗用上报也会被拒。
 3. **轮换 / 吊销**：在「站点管理」重新生成该站点的令牌（或改 `SA_DEPLOY_KEY` 全局令牌）并重新嵌入即可；旧令牌立即失效。
+
+### 本批修复与启用顺序
+
+- **`GET /api/site` 的 `site_key` 曾恒为空**（返回键名与库不一致），现已与库一致；面板「站点管理」能正确读到每站点令牌。
+- **`POST /api/site/key` 曾对「只在 `events` 有历史数据、`sites` 表无行」的站点 UPDATE 0 行却仍返回假 200**，现已自动补登记行。运维可在面板正常完成「启用令牌 / 重新生成令牌」，生成的嵌入代码会带 `data-id`。
+
+> **顺序纪律（务必遵守）**：先把**所有**站点换成带令牌的嵌入代码，并验证 `/api/event` 仍返回 200，再考虑开启 `SA_REQUIRE_KEY=1`（`--require-key`）。否则旧脚本（无令牌）会被拒收、数据中断。宽松模式是这段迁移窗口的安全默认。
 
 ### 注意事项
 
@@ -617,7 +653,7 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 | 端点 | 鉴权 | 说明 |
 |------|------|------|
 | `GET  /tracker.js` | 无 | 返回埋点脚本 |
-| `POST/GET /api/event` | 无 | 接收上报事件（JSON / form / 图片 beacon） |
+| `POST/GET /api/event` | 无 | 接收上报事件（JSON / form / 图片 beacon）；按客户端 IP 限流，超限返回 429 |
 | `GET  /login` | 无 | 登录页（自包含单页；未开 `SA_ALLOW_REGISTER` 时不渲染注册页签） |
 | `POST /api/register` | 无（默认关闭） | 注册新用户。**默认返回 403**；需 `SA_ALLOW_REGISTER=1`。开启后：空库首个注册者=admin 并种会话；其余建成 viewer + 待审（`pending: true`，不种会话）。IP 限流 |
 | `POST /api/login` | 无 | 登录（IP 限流；成功种会话 Cookie） |
@@ -657,6 +693,7 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
   - **Speed Index 为合成估算值**：浏览器端无法获取逐帧截图，本项目以 FCP / LCP / TTFB 构造「视觉完成度曲线」积分得出，**并非 Lighthouse 实测 Speed Index**，仅作趋势参考，请勿当作绝对值解读（与真实值偏差可达 ±30%~50% 且不可校准）。UI 中该项已标注「(估算)」。
   - **口径偏差提示**：TTFB 仅含 `responseStart − requestStart`，**不含**连接 / TLS / 重定向耗时，故比标准 TTFB 偏小；LCP / CLS 在访客提前离开（未触发最终上报）时可能**偏低**；老版本浏览器 / 部分 Safari 不支持相关 Performance API，相关样本会被自动丢弃，整体样本偏向 Chromium 内核。
   - **头部 P75 与各页面 / 各设备均值口径不同**：头部汇总为 P75，而「各页面 / 各设备」明细表为**算术均值**，二者统计口径不同，数值不可直接横向比较。
+- **被软屏蔽占比**：概览 KPI 下方「被软屏蔽」说明行的占比 = `COUNT(events) - COUNT(visible_events)` / 同窗口落库受理事件数。分子是被 `blocked_visitors` 软屏蔽、**仍完整留在 `events` 表**的事件（含机房自动屏蔽与人工手动屏蔽）；分母是同窗口落库受理的事件数（**不限 pageview**）。因此它与上方 PV（仅 pageview）、与面板「已屏蔽访客」的累计去重访客数（不限时间窗口、含人工屏蔽）都不是同一口径。该占比是**下界**：爬虫 UA 由 `is_bot()` 在落库前静默丢弃、本版本未计数，历史与当前均不可得（详见「异常流量标注与软屏蔽」）。
 
 ---
 
@@ -676,6 +713,16 @@ sa-console rollback <tag>          # 例如 sa-console rollback v1.2.0
 
 ### 软屏蔽（仅排除、可恢复）
 在访客 / 实时监控表点该访客的「剔除」，即把其加入 `blocked_visitors`。所有统计经数据库视图 `visible_events` 自动排除其数据，但**原始事件完整保留**，可随时在「站点管理 → 已屏蔽访客」点「恢复」还原。读统计走视图、上报 / 删除等基表操作仍走 `events`，故屏蔽不丢原始数据、可无损还原。
+
+### 看板「被软屏蔽」说明行
+
+概览 KPI 下方新增一行说明：`被软屏蔽 N 次（占落库受理事件 P%）· 去重访客 V 位`，并给出自证等式 `受理 - 可见 = 被屏蔽`。其中：
+
+- 分子 `COUNT(events) - COUNT(visible_events)` 是被 `blocked_visitors` 软屏蔽、**仍完整留在 `events` 表**的事件，含机房自动屏蔽与人工手动屏蔽；分母是同窗口落库受理事件数（不限 pageview），与上方 PV（仅 pageview）、面板「已屏蔽访客」累计去重访客数（不限时间窗口、含人工屏蔽）均不同。完整口径见「指标口径说明」。
+- **爬虫 UA 未计数**：命中 `is_bot()` 的爬虫在落库前被静默丢弃，本版本未计数，历史与当前均不可得，因此这个占比是**下界**而非全部屏蔽量（它只反映「已落库后被软屏蔽」的那部分）。
+- 未启用 ASN 库时，只影响「新增机房流量不再被自动识别」，历史已屏蔽名单仍生效，本行数值可能因人工屏蔽而非零。
+
+> 生产实测锚点（**全时段 lifetime 示例值，非某个 30 天窗口**）：某实例累计 204,219 条事件中，66,080 条（32.4%）被软屏蔽、可见 138,139 条、被屏蔽访客 34,818 位。该服务在持续接收事件，数字会随时间变化，仅作量级参考。
 
 ---
 

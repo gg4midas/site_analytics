@@ -42,6 +42,31 @@ python3 app.py --host 127.0.0.1 --port 8899
 - **界面文案**：面板支持中 / 英双语（顶栏切换）。新增用户可见文案请在 `index.html` 的 `I18N_EN` 字典中补充英文，并对 HTML 用 `data-i18n`、对 JS 动态文本用 `t('中文')` 包裹。
 - **GeoIP 等为可选增强**：缺失时必须优雅降级，不影响其它功能。
 
+## 回归测试
+
+仓库自带一组纯 Python 标准库 / bash 的回归脚本，位于 `tests/`。从**仓库根**运行，脚本会自动定位 `app.py`（同时兼容「放在 `tests/` 下」与「仍在工作区根」两种位置，也可用环境变量 `SA_APP_PATH` / `SA_CONSOLE_PATH` 覆盖）：
+
+```bash
+python tests/test_client_ip.py
+python tests/test_v160_shell.py
+python tests/test_register_gate.py
+```
+
+所有脚本使用独立的临时 `--data-dir` 与随机端口，不碰生产数据；运行期临时产物（数据目录、截图、`__pycache__`）统一写入系统临时目录，不落在仓库工作树里。
+
+已知前置条件：
+
+1. **注册门控**：靠 `/api/register` 做引导登录的老测试（如 `test_v151_login_contract.py`、`test_v160_shell.py`、`test_logout_login_repro.py`）会因 v1.8.6 起自助注册默认关闭而失败，必须设 `SA_ALLOW_REGISTER=1`（多数脚本内已自带该开关）。
+2. **Playwright UI 验收**：`.cjs` 脚本需要 `NODE_PATH` 指向本地 `node_modules`，并指定 `channel: 'chrome'` 走系统 Chrome；无头环境不要依赖默认 bundled Chromium。
+3. **区间选择**：无头 UI 验收要把日期区间切到「过去 28 天」，默认 today 无数据会把「面板空白」误判成功能故障。
+4. **控制台错误断言**：要按 URL 过滤。登录页必然出现 `/api/me` 的 401 与 `/favicon.ico` 的 404，属预期噪声，不应计入失败。
+
+### 发版顺序铁律
+
+`sha256sums.txt` 必须在**所有代码定稿之后、`git tag` 之前**由 `sync_final_v180.py` 生成，并 commit 进 tag 树（详见「发布与维护」）。否则 tag 对应的 raw 清单地址返回 404，线上升级校验会永久降级为告警。
+
+`sha256sums.txt` 只列 18 个运行时文件，`tests/` 不在其中；但升级 / 回滚下载的是 tag tarball（`archive/refs/tags/$tag.tar.gz`，含该 tag 树的全部 tracked 文件）会带上 `tests/`，因此 `sa-console.sh` 的清单外文件白名单必须放行它们，否则整个安装会被「归档含清单外文件」直接拒绝。白名单**只放行 `tests/` 顶层的 `.py` 回归脚本**（正则 `tests/[A-Za-z0-9_.-]+\.py`）；非 `.py`、子目录路径与 `..` 穿越一律拒绝，不依赖 tar 条目检查兜底。
+
 ## 提交前自查
 
 - [ ] `python3 app.py` 能启动，面板能打开且无 JS 报错。

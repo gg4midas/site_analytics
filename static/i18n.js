@@ -2,6 +2,10 @@
 var SA_LANG = (function(){ var l = localStorage.getItem('sa_lang'); return (l==='en'||l==='zh') ? l : 'zh'; })();
 var I18N_EN = {
 '网站流量统计':'Website Analytics',
+'被软屏蔽 {n} 次（占落库受理事件 {p}%）· 去重访客 {v} 位':'Soft-blocked {n} events ({p}% of stored accepted events) · {v} unique visitors',
+'口径：受理 {n} - 可见 {p} = 被屏蔽 {t}':'Basis: accepted {n} - visible {p} = blocked {t}',
+'说明：本行含机房自动软屏蔽与人工软屏蔽之和；爬虫 UA 由 is_bot() 静默丢弃、未落库，本版本未计数；分母为落库受理事件数（不限 pageview），与上方 PV（仅 pageview）不同；与「已屏蔽访客」面板的累计去重访客数也不同（后者不限时间窗口、含人工屏蔽）。':'Note: this combines automatic datacenter soft-blocks and manual blocks. Bot-UA requests are silently dropped by is_bot() before storage and are NOT counted in this version. The denominator is stored accepted events (all types), unlike PV above (pageview only), and unlike the cumulative unique visitors in the Blocked Visitors panel (no time window, includes manual blocks).',
+'提示：未启用 ASN 库，新增机房流量不会被自动识别（已屏蔽名单仍生效）；本行数值可能因人工屏蔽而非零。':'Note: ASN database not enabled, so NEW datacenter traffic is no longer auto-detected (the existing blocklist still applies); this value may be non-zero due to manual blocks.',
 '概览':'Overview','访客':'Visitors','内容':'Content','性能':'Performance','来源':'Sources','地域':'Geo','实时监控':'Realtime',
 '渠道来源':'Traffic sources','地理分布':'Geography',
 '刷新':'Refresh','深色':'Dark','浅色':'Light',
