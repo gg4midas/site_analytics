@@ -39,7 +39,7 @@ The analytics dashboard (`index.html`) is a single-page console. The top bar let
 | Module | Content |
 |--------|---------|
 | Overview | Core KPIs: PV / UV / sessions / bounce rate / avg. time on site, visit trend, visit depth, new vs. returning visitors, device distribution |
-| Visitors | Visitor details (source, device/browser, ISP, region, time on site, last active), potential leads and suspected bot / data-collection flags |
+| Visitors | Visitor details (source, device/browser, ISP, region, time on site, last active), potential target visitors and suspected bot / data-collection flags |
 | Content | Top pages, top landing pages, top exit pages, top pages by avg. time on site |
 | Performance | Front-end performance samples (FCP / LCP / TTFB / CLS / Speed Index) |
 | Sources | Source-type distribution, top source domains |
