@@ -119,7 +119,8 @@ var expandedVisitors = {};
 var dashTimer = null;
 var autoRefreshPaused = false;   // 展开访客详情或打开弹窗时暂停自动刷新
 var blockedData = null;          // 已屏蔽访客缓存（站点管理弹窗折叠展示）
-var blockedExpanded = false;      // 已屏蔽访客列表是否展开
+var blockedExpanded = false;      // 已屏蔽访客列表是否展开（站点管理弹窗）
+var blockedNoteExpanded = false;  // 概览「被软屏蔽」说明详情是否展开（与上面的访客列表相互独立）
 var lastRefreshAt = 0;
 
 function setTip(msg, isWarn){
@@ -576,6 +577,34 @@ function manualRefresh(){
   else { loadData(currentTab, true); done(); }
 }
 
+/* 概览「被软屏蔽」说明：按 blockedNoteExpanded 同步详情区显隐、箭头、aria 与提示文案。
+   toggleBlockedNote() 与 renderOverview() 共用，保证折叠状态跨刷新/重渲染不丢失。 */
+function applyBlockedNoteState(){
+  var detail = document.getElementById('blockedNoteDetail');
+  var arrow  = document.getElementById('blockedNoteArrow');
+  var btn    = document.getElementById('blockedNoteBtn');
+  var hint   = document.getElementById('blockedNoteHint');
+  if(!detail) return;
+  if(!arrow) return;
+  if(!btn) return;
+  if(!hint) return;
+  if(blockedNoteExpanded){
+    detail.style.display = '';
+    arrow.textContent = '▾';
+    btn.setAttribute('aria-expanded', 'true');
+    hint.textContent = t('收起说明');
+  } else {
+    detail.style.display = 'none';
+    arrow.textContent = '▸';
+    btn.setAttribute('aria-expanded', 'false');
+    hint.textContent = t('查看口径说明');
+  }
+}
+function toggleBlockedNote(){
+  blockedNoteExpanded = !blockedNoteExpanded;
+  applyBlockedNoteState();
+}
+
 function renderOverview(d){
   var daily=d.daily || [];
   var isHourly = daily.length && daily[0].label !== undefined;
@@ -611,14 +640,20 @@ function renderOverview(d){
   document.getElementById('kpis').innerHTML=html;
 
   // 被软屏蔽占比说明：字段由后端 /api/stats 提供，旧版本后端或异常时按 0 兜底，避免出现 NaN%
+  // 默认只显示一行紧凑提示条；完整口径说明收进详情，点击展开/收起，状态跨刷新保留。
   var note = document.getElementById('blockedNote');
-  if(note){
+  var summary = document.getElementById('blockedNoteSummary');
+  var detail = document.getElementById('blockedNoteDetail');
+  if(note && summary && detail){
     var be = Number(d.blocked_events)||0;
     var bv = Number(d.blocked_visible)||0;
     var den = Number(d.blocked_denominator)||0;
     var uv = Number(d.blocked_uv)||0;
     var ratio = Number(d.blocked_ratio)||0;
     if(den > 0){
+      // 摘要：一行，不含去重访客数，避免过长
+      summary.textContent = t('被软屏蔽 {n} 次（占落库受理事件 {p}%）', {n:fmtNum(be), p:ratio.toFixed(2)});
+      // 详情：4 段诚实口径声明逐字保留，用 \n 连接，white-space:pre-line 负责换行
       var parts = [
         t('被软屏蔽 {n} 次（占落库受理事件 {p}%）· 去重访客 {v} 位', {n:fmtNum(be), p:ratio.toFixed(2), v:fmtNum(uv)}),
         t('口径：受理 {n} - 可见 {p} = 被屏蔽 {t}', {n:fmtNum(den), p:fmtNum(bv), t:fmtNum(be)}),
@@ -627,12 +662,14 @@ function renderOverview(d){
       if(d.blocked_asn_enabled === false){
         parts.push(t('提示：未启用 ASN 库，新增机房流量不会被自动识别（已屏蔽名单仍生效）；本行数值可能因人工屏蔽而非零。'));
       }
-      note.textContent = parts.filter(Boolean).join('\n');
+      detail.textContent = parts.filter(Boolean).join('\n');
       note.style.display = '';
     } else {
-      note.textContent = '';
+      summary.textContent = '';
+      detail.textContent = '';
       note.style.display = 'none';
     }
+    applyBlockedNoteState();   // 按 blockedNoteExpanded 重新应用显隐/箭头/aria/hint，不重置折叠状态
   }
 
   var c1=initChart('chartTrend');

@@ -412,3 +412,11 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--panel3);border-radius:6px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--border2)}
+/* === 概览「被软屏蔽」说明：一行提示条 + 点击伸缩详情 === */
+.blocked-note{margin-top:8px}
+.blocked-note-btn{background:transparent;border:0;padding:2px 0;cursor:pointer;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;text-align:left}
+.blocked-note-btn:hover{color:var(--accent)}
+.blocked-note-arrow{font-size:11px;color:var(--accent)}
+.blocked-note-summary{color:var(--muted)}
+.blocked-note-hint{color:var(--accent);border-bottom:1px dashed var(--accent)}
+.blocked-note-detail{margin-top:6px;padding:8px 10px;border:1px solid var(--border2);border-radius:8px;background:var(--panel2-glass);color:var(--muted);font-size:11px;line-height:1.7;white-space:pre-line}
