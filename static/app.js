@@ -348,6 +348,7 @@ function loadSites(){
           currentSite = res.sites[0];
           initRangeSelector();
           setTip('');
+          updateHud(null);   // v1.9.1：站点就绪即填 HUD，避免首屏四个值全是占位符
           loadData();
         } else {
           var msg = res.error || res.msg || t('未获取到站点');
@@ -607,6 +608,25 @@ function toggleBlockedNote(){
   applyBlockedNoteState();
 }
 
+/* v1.9.1 HUD 状态条：只展示真实数据（在线人数来自 /api/stats，更新时间为真实刷新时刻，
+   站点为当前选择，时钟为本地时间）。绝不展示编造的延迟 / 节点 / 采样率。 */
+function tickHudClock(){
+  var el=document.getElementById('hudClock');
+  if(el) el.textContent=new Date().toTimeString().slice(0,8);
+}
+function updateHud(d){
+  try{
+    var st=document.getElementById('hudState'),
+        on=document.getElementById('hudOnline'),
+        up=document.getElementById('hudUpdated'),
+        si=document.getElementById('hudSite');
+    if(st) st.textContent=t('已连接');
+    if(on) on.textContent=fmtNum((d&&d.online)||0);
+    if(up) up.textContent=new Date().toTimeString().slice(0,8);
+    if(si) si.textContent=currentSite||'—';
+  }catch(e){}
+}
+
 function renderOverview(d){
   var daily=d.daily || [];
   var isHourly = daily.length && daily[0].label !== undefined;
@@ -673,6 +693,8 @@ function renderOverview(d){
     }
     applyBlockedNoteState();   // 按 blockedNoteExpanded 重新应用显隐/箭头/aria/hint，不重置折叠状态
   }
+  updateHud(d);                // v1.9.1 HUD：每次概览重渲染同步真实在线数/更新时间/站点
+
 
   var c1=initChart('chartTrend');
   if(c1){
@@ -1777,6 +1799,8 @@ applyI18n();
 applyThemeAttr();
 initRangeSelector();
 moveNavIsland();
+tickHudClock();                  // v1.9.1：首屏立即显示时钟，避免先闪 --:--:--
+setInterval(tickHudClock,1000);
 
 /* ---------------- 用户管理（v1.5.0 登录鉴权） ---------------- */
 function openUsers(){

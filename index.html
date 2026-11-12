@@ -10,10 +10,10 @@
 <body>
 <div id="loadbar"></div>
 <div id="app">
-  <div class="topbar">
+  <div class="topbar hud-panel">
     <div class="brand">
-      <div class="logo"></div>
-      <div class="brand-text"><span data-i18n="网站流量统计">网站流量统计</span><small>Client-side Analytics</small></div>
+      <div class="logo" aria-hidden="true"></div>
+      <div class="brand-text"><span data-i18n="网站流量统计">网站流量统计</span><small>Client-side Analytics // Live Telemetry</small></div>
     </div>
 
     <!-- 一级 · 主控制区：站点 + 时间范围（决定「看哪个站、哪段时间」，最高频，始终可见） -->
@@ -34,7 +34,13 @@
       </div>
     </div>
 
-    <div class="spacer"></div>
+    <!-- v1.9.1 HUD 状态条：全部为真实数据，不展示编造的延迟/节点/采样率 -->
+    <div class="hud-items" id="hudItems">
+      <span class="hud-item"><i class="ok"></i><span data-i18n="采集状态">采集状态</span><b id="hudState">—</b></span>
+      <span class="hud-item"><i class="c"></i><span data-i18n="在线人数">在线人数</span><b id="hudOnline">—</b></span>
+      <span class="hud-item"><span data-i18n="最近更新">最近更新</span><b id="hudUpdated">—</b></span>
+      <span class="hud-item"><span data-i18n="当前站点">当前站点</span><b id="hudSite">—</b></span>
+    </div>
 
     <!-- 二级 · 图标工具条：刷新 / 自动刷新状态 / 语言 / 主题；三级 · 账户收纳进头像下拉 -->
     <div class="toolbar">
@@ -43,6 +49,7 @@
       <span class="tool-sep"></span>
       <button class="icon-btn" id="langToggle" onclick="switchLang(SA_LANG==='en'?'zh':'en')" data-i18n-attr="title:语言" title="语言" aria-label="语言">EN</button>
       <button class="icon-btn" id="btnTheme" onclick="toggleTheme()" title="主题" aria-label="主题">☾</button>
+      <span class="hud-clock" id="hudClock" aria-label="clock">--:--:--</span>
       <span id="userArea" class="user-area" style="display:none">
         <button class="icon-btn avatar" id="btnUserMenu" onclick="toggleUserMenu(event)" data-i18n-attr="title:账户" title="账户" aria-label="账户" aria-haspopup="true"></button>
         <div class="menu" id="userMenu" style="display:none" role="menu">
