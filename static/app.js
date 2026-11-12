@@ -37,6 +37,7 @@ function switchLang(lang){
   SA_LANG = (lang==='en') ? 'en' : 'zh';
   localStorage.setItem('sa_lang', SA_LANG);
   applyI18n();
+  setTimeout(moveNavIsland, 0);
   var og = document.querySelector('#selRange optgroup');
   if(og) og.label = t('月份');
   // 工具栏时间下拉与实时粒度下拉需在切换语言后重建/重译
@@ -91,6 +92,7 @@ function toggleTheme(){
   currentTheme = (currentTheme==='dark') ? 'light' : 'dark';
   localStorage.setItem('sa_theme', currentTheme);
   applyThemeAttr();
+  moveNavIsland();
   disposeAllCharts();   // v1.7.1：echarts 主题绑定于 init，切主题必须重建实例
   loadData();
   if(currentTab==='realtime') loadRecent(true);
@@ -1496,10 +1498,18 @@ function onWindowChange(){
 
 var currentTab='overview';
 var liveTimer=null;
+function moveNavIsland(){
+  var isl=document.getElementById('navIsland');
+  var btn=document.querySelector('#nav button.active');
+  if(!isl||!btn) return;
+  isl.style.width=btn.offsetWidth+'px';
+  isl.style.transform='translateX('+btn.offsetLeft+'px)';
+}
 function switchTab(tab){
   currentTab=tab;
   var btns=document.querySelectorAll('#nav button');
   for(var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-tab')===tab);
+  moveNavIsland();
   var secs=document.querySelectorAll('[id^="tab-"]');
   for(var j=0;j<secs.length;j++) secs[j].style.display='none';
   var sec=document.getElementById('tab-'+tab);
@@ -1529,7 +1539,7 @@ function checkAutoRefreshPause(){
   setAutoRefreshPaused(hasExpanded || modalOpen);
 }
 
-window.addEventListener('resize', function(){ for(var k in charts){ if(charts[k]) charts[k].resize(); } });
+window.addEventListener('resize', function(){ for(var k in charts){ if(charts[k]) charts[k].resize(); } moveNavIsland(); });
 
 // ---------------- 站点管理 ----------------
 function openSiteManager(){ document.getElementById('siteModal').style.display='flex'; fillDeployCode(); loadManagedSites(); loadRetentionSettings(); blockedExpanded=false; var bl=document.getElementById('blockedList'); if(bl) bl.style.display='none'; var ba=document.getElementById('blockedArrow'); if(ba) ba.textContent='▸'; var bl2=document.getElementById('blockedLabel'); if(bl2) bl2.textContent=t('展开已屏蔽访客'); loadBlocked(); checkAutoRefreshPause(); var xb=document.querySelector('#siteModal .x'); if(xb) xb.focus(); }
@@ -1766,6 +1776,7 @@ function fallbackCopy(txt){
 applyI18n();
 applyThemeAttr();
 initRangeSelector();
+moveNavIsland();
 
 /* ---------------- 用户管理（v1.5.0 登录鉴权） ---------------- */
 function openUsers(){

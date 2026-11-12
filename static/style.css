@@ -189,16 +189,20 @@ select optgroup{font-weight:700;font-style:normal}
   .icon-btn{width:32px;height:32px}
   .tool-sep{display:none}
 }
-/* === 导航 Tab：渐变发光下划线 === */
-.nav{display:flex;align-items:flex-end;gap:8px;border-bottom:1px solid var(--border);margin-bottom:18px}
-.nav-left{display:flex;gap:2px;flex-wrap:nowrap;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin}
-.nav button{background:transparent;color:var(--muted);border:none;padding:11px 16px;font-size:13px;
-  cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;font-weight:500;
-  transition:color var(--t-fast)}
+/* === 导航 Tab：滑动岛 + 编号 + 图标 === */
+.nav{position:relative;display:flex;align-items:center;border:1px solid var(--border);border-radius:12px;background:var(--panel-glass);padding:5px;margin-bottom:18px}
+.nav-left{position:relative;display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin;padding:0}
+.nav-island{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:8px;border:1px solid var(--border2);background:linear-gradient(120deg,rgba(56,189,248,.17),rgba(167,139,250,.14));box-shadow:0 0 20px var(--glow-accent);transition:transform .32s cubic-bezier(.4,0,.2,1),width .32s cubic-bezier(.4,0,.2,1);pointer-events:none;z-index:0}
+.nav button{position:relative;z-index:1;flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:transparent;color:var(--muted);border:0;border-radius:8px;padding:11px 10px;font-size:13px;cursor:pointer;white-space:nowrap;font-weight:500;transition:color var(--t-fast)}
 .nav button:hover{color:var(--text)}
-.nav button.active{color:var(--text);border-bottom-color:transparent;
-  background:linear-gradient(90deg,var(--accent),var(--accent2)) bottom/100% 2px no-repeat;
-  text-shadow:0 0 14px var(--glow-accent)}
+.nav button.active{color:var(--text)}
+.tab-idx{font:10px ui-monospace,Consolas,monospace;color:var(--faint);letter-spacing:.5px}
+.nav button.active .tab-idx{color:var(--accent)}
+.tab-ico{width:14px;height:14px;flex:none;opacity:.72}
+.nav button.active .tab-ico{opacity:1;filter:drop-shadow(0 0 5px var(--accent))}
+.tab-live{width:6px;height:6px;border-radius:50%;background:var(--down);box-shadow:0 0 8px var(--down);animation:tabPulse 1.6s infinite;flex:none}
+@keyframes tabPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
+@media(max-width:760px){.tab-ico{display:none}.nav button{gap:5px;padding:10px 7px}}
 /* === 卡片：玻璃拟态 + hover 上浮 === */
 .section{margin-bottom:22px}
 .section h2{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;
@@ -420,3 +424,10 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
 .blocked-note-summary{color:var(--muted)}
 .blocked-note-hint{color:var(--accent);border-bottom:1px dashed var(--accent)}
 .blocked-note-detail{margin-top:6px;padding:8px 10px;border:1px solid var(--border2);border-radius:8px;background:var(--panel2-glass);color:var(--muted);font-size:11px;line-height:1.7;white-space:pre-line}
+/* === 科技感增量 + 浅色主题荧光收敛（v1.9.0） === */
+.kpi .val{font-variant-numeric:tabular-nums}
+/* v1.9.0 浅色主题：收敛荧光装饰，避免白底下突兀 */
+:root[data-theme="light"] .nav-island{box-shadow:none;border-color:var(--border2);background:rgba(14,165,233,.10)}
+:root[data-theme="light"] .nav button.active .tab-ico{filter:none}
+:root[data-theme="light"] .tab-live{box-shadow:none}
+:root[data-theme="light"] .kpi:hover{box-shadow:0 6px 22px rgba(31,41,55,.09)}

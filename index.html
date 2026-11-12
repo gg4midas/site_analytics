@@ -56,13 +56,39 @@
   </div>
 
   <div class="nav" id="nav">
-    <div class="nav-left">
-      <button data-tab="overview" class="active" onclick="switchTab('overview')" data-i18n="概览">概览</button>
-      <button data-tab="visitors" onclick="switchTab('visitors')" data-i18n="访客">访客</button>
-      <button data-tab="content" onclick="switchTab('content')" data-i18n="内容">内容</button>
-      <button data-tab="perf" onclick="switchTab('perf')" data-i18n="性能">性能</button>
-      <button data-tab="sources" onclick="switchTab('sources')" data-i18n="来源">来源</button>
-      <button data-tab="realtime" onclick="switchTab('realtime')" data-i18n="实时监控">实时监控</button>
+    <div class="nav-left" id="navLeft">
+      <div class="nav-island" id="navIsland"></div>
+      <button data-tab="overview" class="active" onclick="switchTab('overview')">
+        <span class="tab-idx">01</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11 L6 7 L9 9 L14 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span class="tab-label" data-i18n="概览">概览</span>
+      </button>
+      <button data-tab="visitors" onclick="switchTab('visitors')">
+        <span class="tab-idx">02</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 13c0-2.5 1.8-4 4-4s4 1.5 4 4" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <span class="tab-label" data-i18n="访客">访客</span>
+      </button>
+      <button data-tab="content" onclick="switchTab('content')">
+        <span class="tab-idx">03</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 6h6M5 9h6M5 11.5h3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <span class="tab-label" data-i18n="内容">内容</span>
+      </button>
+      <button data-tab="perf" onclick="switchTab('perf')">
+        <span class="tab-idx">04</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12h2.5l2-6 2.5 8 2-5H14" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span class="tab-label" data-i18n="性能">性能</span>
+      </button>
+      <button data-tab="sources" onclick="switchTab('sources')">
+        <span class="tab-idx">05</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        <span class="tab-label" data-i18n="来源">来源</span>
+      </button>
+      <button data-tab="realtime" onclick="switchTab('realtime')">
+        <span class="tab-idx">06</span>
+        <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg>
+        <span class="tab-label" data-i18n="实时监控">实时监控</span>
+        <span class="tab-live" aria-hidden="true"></span>
+      </button>
     </div>
   </div>
 
