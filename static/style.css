@@ -504,3 +504,10 @@ body::after{background-image:
 :root[data-theme="light"] .card::after{display:none}
 :root[data-theme="light"] .kpi::after{opacity:.3}
 :root[data-theme="light"] .card .ct::before{box-shadow:none}
+
+/* ==================== v1.9.2 按设计稿收敛 KPI 装饰 ====================
+   用户反馈：右上角光晕不好看、顶部加粗渐变上框线多余。设计稿的 KPI 无上框线，
+   光晕仅为极淡 .11 的径向渐变；这里两处都直接去掉，保持卡片干净。 */
+.kpi::before{display:none}
+.kpi::after{display:none}
+.kpi:hover::before{display:none}
