@@ -433,8 +433,8 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
 :root[data-theme="light"] .kpi:hover{box-shadow:0 6px 22px rgba(31,41,55,.09)}
 
 /* ==================== v1.9.1 整页科技感视觉层 ====================
-   移植自方案 A 预览。只做视觉皮肤，不含任何虚拟数据：HUD 文本全部由
-   updateHud() 用真实 /api/stats 数据填充。深浅主题均只用现有变量取色。 */
+   移植自方案 A 预览。只做视觉皮肤，不含任何虚拟数据；顶栏仅保留本地实时时钟。
+   深浅主题均只用现有变量取色。v1.9.3 按用户要求移除冗余的 HUD 状态项文字。 */
 
 /* --- HUD 顶栏：整块面板 + 左侧渐变竖条 + 描边准星 logo --- */
 .topbar.hud-panel{position:relative;z-index:20;align-items:center;gap:16px;
@@ -452,20 +452,9 @@ body.loading #app{opacity:.82;transition:opacity var(--t)}
 .hud-panel .brand-text small{font:10px ui-monospace,Consolas,monospace;letter-spacing:1.1px;
   color:var(--faint);text-transform:uppercase}
 
-/* --- HUD 状态项（真实数据） --- */
-.hud-items{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;
-  gap:16px;flex-wrap:wrap}
-.hud-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;
-  font:10.5px ui-monospace,Consolas,monospace;color:var(--muted)}
-.hud-item i{width:5px;height:5px;border-radius:50%;flex:none;
-  background:var(--up);box-shadow:0 0 7px var(--up);font-style:normal}
-.hud-item i.c{background:var(--accent);box-shadow:0 0 7px var(--accent)}
-.hud-item b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;
-  max-width:160px;overflow:hidden;text-overflow:ellipsis}
+/* --- 顶栏实时时钟 --- */
 .hud-clock{font:11px ui-monospace,Consolas,monospace;letter-spacing:1px;
   color:var(--accent);white-space:nowrap;font-variant-numeric:tabular-nums}
-.toolbar{margin-left:auto}
-@media(max-width:1180px){.hud-items{display:none}}
 
 /* --- 卡片四角 L 形切线 --- */
 .card::before,.card::after{content:'';position:absolute;width:11px;height:11px;pointer-events:none}
@@ -499,7 +488,6 @@ body::after{background-image:
 /* --- 浅色主题：收敛全部新增荧光，避免白底突兀 --- */
 :root[data-theme="light"] .topbar.hud-panel::before{background:var(--border2);box-shadow:none}
 :root[data-theme="light"] .hud-panel .brand .logo{box-shadow:none}
-:root[data-theme="light"] .hud-item i{box-shadow:none}
 :root[data-theme="light"] .card::before,
 :root[data-theme="light"] .card::after{display:none}
 :root[data-theme="light"] .kpi::after{opacity:.3}

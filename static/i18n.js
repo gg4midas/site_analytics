@@ -2,7 +2,6 @@
 var SA_LANG = (function(){ var l = localStorage.getItem('sa_lang'); return (l==='en'||l==='zh') ? l : 'zh'; })();
 var I18N_EN = {
 '网站流量统计':'Website Analytics',
-'采集状态':'Capture','在线人数':'Online','最近更新':'Updated','当前站点':'Site','已连接':'Connected',
 '被软屏蔽 {n} 次（占落库受理事件 {p}%）· 去重访客 {v} 位':'Soft-blocked {n} events ({p}% of stored accepted events) · {v} unique visitors',
 '口径：受理 {n} - 可见 {p} = 被屏蔽 {t}':'Basis: accepted {n} - visible {p} = blocked {t}',
 '说明：本行含机房自动软屏蔽与人工软屏蔽之和；爬虫 UA 由 is_bot() 静默丢弃、未落库，本版本未计数；分母为落库受理事件数（不限 pageview），与上方 PV（仅 pageview）不同；与「已屏蔽访客」面板的累计去重访客数也不同（后者不限时间窗口、含人工屏蔽）。':'Note: this combines automatic datacenter soft-blocks and manual blocks. Bot-UA requests are silently dropped by is_bot() before storage and are NOT counted in this version. The denominator is stored accepted events (all types), unlike PV above (pageview only), and unlike the cumulative unique visitors in the Blocked Visitors panel (no time window, includes manual blocks).',
